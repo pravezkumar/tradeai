@@ -946,7 +946,9 @@ def respond_supplier_request(qid:str,p:BuyerRequestResponseIn):
 def seller_quote(rid:str,p:SellerQuoteIn,authorization:str|None=Header(default=None)):
     with engine.begin() as c:
         sid=auth_seller(c,authorization); get_rfq(c,rid)
-        if not c.execute(select(matches.c.id).where(matches.c.rfq_id==rid,matches.c.supplier_id==sid)).first(): raise HTTPException(403,"This RFQ has not been released to your supplier account")
+        released=rowdict(c.execute(select(matches).where(matches.c.rfq_id==rid,matches.c.supplier_id==sid)).first())
+        if not released: raise HTTPException(403,"This RFQ has not been released to your supplier account")
+        if released["status"]=="declined": raise HTTPException(409,"This opportunity was declined and can no longer be quoted")
         x=p.model_dump(); existing=c.execute(select(quotes.c.id).where(quotes.c.rfq_id==rid,quotes.c.supplier_id==sid).order_by(quotes.c.created_at.desc())).scalar()
         if existing:
             c.execute(update(quotes).where(quotes.c.id==existing).values(**x,created_at=utcnow())); qid=existing; created=False
