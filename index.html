@@ -39,6 +39,18 @@ body{overflow-x:hidden}.site-header{box-shadow:0 1px 0 rgba(7,24,39,.04)}
 @media(max-width:1000px){.catalogue-grid{grid-template-columns:1fr 1fr}.analytics-grid{grid-template-columns:1fr}.roi-banner{grid-template-columns:1fr 1fr}.roi-banner div:nth-child(2){border-left:0;padding-left:0}.routing-board{grid-template-columns:1fr 1fr}}
 @media(max-width:720px){.workspace-title{align-items:flex-start;flex-direction:column}.catalogue-grid,.verification-grid,.admin-settings,.routing-board,.capacity-grid,.review-cols,.quote-builder-grid{grid-template-columns:1fr}.roi-banner{grid-template-columns:1fr}.roi-banner div:not(:first-child){border-left:0;padding-left:0;border-top:1px solid rgba(255,255,255,.12);padding-top:12px}.wizard-labels span{font-size:0}.wizard-labels span.active{font-size:8px}.dashboard-shell{display:block}.dash-side{display:none}.dash-main{min-width:0}.seller-mobile-nav{display:flex;position:sticky;top:0;z-index:30;background:#071827;overflow:auto;padding:8px;gap:5px}.seller-mobile-nav button{border:0;background:transparent;color:#b5c5cf;padding:8px 10px;border-radius:8px;font-size:8px;font-weight:800;white-space:nowrap}.seller-mobile-nav button.active{background:#12364a;color:#fff}.workspace-table{min-width:720px}}
 
+
+/* Seller account portal */
+.seller-auth-shell{min-height:calc(100vh - 110px);padding:64px 0 90px;background:linear-gradient(135deg,#f7faf9 0%,#fff 55%,#eef8f4 100%)}
+.auth-layout{display:grid;grid-template-columns:minmax(0,.9fr) minmax(440px,1.1fr);gap:70px;align-items:center}
+.auth-copy h1{font-size:52px;line-height:1.05;letter-spacing:-.045em;margin:16px 0}.auth-copy>p{font-size:16px;line-height:1.7;color:var(--muted);max-width:570px}
+.auth-benefits{display:grid;gap:12px;margin-top:30px}.auth-benefits div{display:grid;grid-template-columns:38px 1fr;gap:12px;align-items:center}.auth-benefits span{width:38px;height:38px;border-radius:11px;background:var(--mint);color:var(--green);display:grid;place-items:center;font-weight:900}.auth-benefits b{font-size:12px}.auth-benefits small{display:block;color:var(--muted);font-size:9px;margin-top:3px}
+.auth-card{padding:30px;box-shadow:0 25px 70px rgba(8,31,49,.12)}.auth-tabs{display:grid;grid-template-columns:1fr 1fr;background:var(--soft);padding:4px;border-radius:12px;margin-bottom:26px}.auth-tabs button{border:0;background:transparent;border-radius:9px;padding:11px;font-size:11px;font-weight:900;color:#718194}.auth-tabs button.active{background:#fff;color:var(--ink);box-shadow:0 3px 12px rgba(8,31,49,.08)}
+.auth-pane{display:none}.auth-pane.active{display:block}.auth-pane h2{font-size:24px;margin:0 0 6px}.auth-pane>p{font-size:10px;color:var(--muted);margin:0 0 22px}.auth-form{display:grid;gap:13px}.auth-form.two{grid-template-columns:1fr 1fr}.auth-form label{display:grid;gap:6px;font-size:9px;font-weight:900;color:#5d6f80}.auth-form label.wide{grid-column:1/-1}.auth-form input,.auth-form select{width:100%;border:1px solid var(--line);border-radius:10px;padding:12px;background:#fff;outline:none}.auth-form input:focus,.auth-form select:focus{border-color:#80bda9;box-shadow:0 0 0 3px rgba(13,139,102,.08)}
+.auth-check{display:flex!important;grid-template-columns:18px 1fr!important;align-items:start!important;gap:8px!important;font-weight:600!important;line-height:1.5!important}.auth-check input{width:15px!important;margin-top:1px}.auth-note{font-size:9px;color:#788899;line-height:1.55;margin:13px 0 0;text-align:center}.auth-divider{display:flex;align-items:center;gap:10px;color:#9aa8b5;font-size:8px;font-weight:800;margin:16px 0}.auth-divider:before,.auth-divider:after{content:"";height:1px;background:var(--line);flex:1}.seller-account-chip{display:flex;align-items:center;gap:9px;background:#eef7f3;border:1px solid #d7eee5;border-radius:10px;padding:10px 12px;margin-bottom:18px}.seller-account-chip span{width:30px;height:30px;border-radius:8px;background:var(--green);color:#fff;display:grid;place-items:center;font-weight:900}.seller-account-chip b{display:block;font-size:10px}.seller-account-chip small{display:block;color:#6c7d8d;font-size:8px;margin-top:2px}
+.account-created{display:none;text-align:center;padding:28px 10px}.account-created.show{display:block}.account-created .success-icon{margin:0 auto 14px}.account-created h2{font-size:24px;margin:0 0 8px}.account-created p{font-size:11px;line-height:1.6;color:var(--muted);max-width:420px;margin:0 auto 20px}
+@media(max-width:900px){.auth-layout{grid-template-columns:1fr;gap:30px}.auth-copy h1{font-size:40px}.auth-card{padding:22px}}@media(max-width:560px){.seller-auth-shell{padding:32px 0 70px}.auth-form.two{grid-template-columns:1fr}.auth-form label.wide{grid-column:auto}.auth-copy h1{font-size:34px}}
+
 </style>
 </head>
 <body>
@@ -55,7 +67,7 @@ body{overflow-x:hidden}.site-header{box-shadow:0 1px 0 rgba(7,24,39,.04)}
         <a href="#seller-dashboard" data-nav="seller-dashboard">Seller Demo</a>
       </nav>
       <div class="nav-actions">
-        <button class="btn btn-ghost small" data-go="seller-dashboard">Seller Login</button>
+        <button class="btn btn-ghost small" data-go="seller-account" data-auth-tab="login">Seller Login</button>
         <button class="btn btn-primary small" data-go="buyer">Get Quotes</button>
         <button class="menu-btn" id="menuBtn" aria-label="Menu">☰</button>
       </div>
@@ -201,8 +213,64 @@ body{overflow-x:hidden}.site-header{box-shadow:0 1px 0 rgba(7,24,39,.04)}
 
     <!-- SELLER LANDING -->
     <section class="view" data-view="seller">
-      <div class="seller-hero container"><div><div class="eyebrow">FOR SUPPLIERS & SERVICE PROVIDERS</div><h1>Spend time on opportunities that look like real business.</h1><p>Build a verified business profile, define what you actually supply, and receive AI-qualified requirements matched to your capabilities.</p><div class="cta-row"><button class="btn btn-primary" data-go="seller-onboarding">Create supplier profile</button><button class="btn btn-outline" data-go="seller-dashboard">View dashboard demo</button></div><div class="seller-points"><span>✓ Qualification reasons</span><span>✓ Match score</span><span>✓ Protected buyer contact</span><span>✓ Structured quotations</span></div></div><div class="seller-preview panel"><div class="op-head"><span class="status hot">HOT 94</span><small>NEW OPPORTUNITY</small></div><h3>500 bags OPC 53 Grade Cement</h3><p>SIDCUL, Haridwar · Required by Wednesday</p><div class="op-stats"><div><b>₹1.9L</b><span>Est. value</span></div><div><b>96%</b><span>Match</span></div><div><b>4 min</b><span>Age</span></div></div><ul class="mini-checks"><li>✓ Mobile verified</li><li>✓ Quantity confirmed</li><li>✓ Delivery location confirmed</li><li>✓ Purchase this week</li></ul><button class="btn btn-dark full" data-go="opportunity">View opportunity</button></div></div>
+      <div class="seller-hero container"><div><div class="eyebrow">FOR SUPPLIERS & SERVICE PROVIDERS</div><h1>Spend time on opportunities that look like real business.</h1><p>Build a verified business profile, define what you actually supply, and receive AI-qualified requirements matched to your capabilities.</p><div class="cta-row"><button class="btn btn-primary" data-go="seller-account" data-auth-tab="signup">Create Seller Account</button><button class="btn btn-outline" data-go="seller-dashboard">View dashboard demo</button></div><div class="seller-points"><span>✓ Qualification reasons</span><span>✓ Match score</span><span>✓ Protected buyer contact</span><span>✓ Structured quotations</span></div></div><div class="seller-preview panel"><div class="op-head"><span class="status hot">HOT 94</span><small>NEW OPPORTUNITY</small></div><h3>500 bags OPC 53 Grade Cement</h3><p>SIDCUL, Haridwar · Required by Wednesday</p><div class="op-stats"><div><b>₹1.9L</b><span>Est. value</span></div><div><b>96%</b><span>Match</span></div><div><b>4 min</b><span>Age</span></div></div><ul class="mini-checks"><li>✓ Mobile verified</li><li>✓ Quantity confirmed</li><li>✓ Delivery location confirmed</li><li>✓ Purchase this week</li></ul><button class="btn btn-dark full" data-go="opportunity">View opportunity</button></div></div>
       <section class="section soft-section"><div class="container"><div class="section-heading centered"><span>SELLER EXPERIENCE</span><h2>Measure business outcomes, not profile views.</h2></div><div class="metric-demo"><article><span>QUALIFIED OPPORTUNITIES</span><strong>38</strong><small>+12% this month</small></article><article><span>QUOTES SENT</span><strong>21</strong><small>55% quote rate</small></article><article><span>ORDERS WON</span><strong>7</strong><small>₹8.4L verified value</small></article><article><span>PLATFORM ROI</span><strong>18.6×</strong><small>Revenue / spend</small></article></div></div></section>
+    </section>
+
+
+    <!-- SELLER / SUPPLIER ACCOUNT -->
+    <section class="view" data-view="seller-account">
+      <div class="seller-auth-shell">
+        <div class="container auth-layout">
+          <div class="auth-copy">
+            <div class="eyebrow">SELLER / SUPPLIER PORTAL</div>
+            <h1>Create your business account and start receiving qualified opportunities.</h1>
+            <p>For manufacturers, distributors, wholesalers, exporters and service providers. Your business profile controls which buyer requirements can be matched to you.</p>
+            <div class="auth-benefits">
+              <div><span>✓</span><p><b>One business account</b><small>Manage profile, capabilities, team access and verification.</small></p></div>
+              <div><span>⚡</span><p><b>Qualified opportunities</b><small>See intent score, matching reasons, quantity, location and timeline.</small></p></div>
+              <div><span>₹</span><p><b>Quotes, orders and ROI</b><small>Track quotation activity, won orders and measurable platform return.</small></p></div>
+              <div><span>🔒</span><p><b>Buyer privacy by design</b><small>Buyer contact remains protected until the buyer approves contact.</small></p></div>
+            </div>
+          </div>
+          <div class="auth-card panel" id="sellerAuthCard">
+            <div class="auth-tabs"><button class="active" data-auth-pane="signup">Create Account</button><button data-auth-pane="login">Seller Login</button></div>
+            <div class="auth-pane active" data-auth-content="signup">
+              <h2>Create Seller Account</h2><p>Account first. Business verification and catalogue setup come next.</p>
+              <form class="auth-form two" id="sellerSignupForm">
+                <label>Full name<input id="sellerName" required placeholder="Authorized person"></label>
+                <label>Business name<input id="sellerBusiness" required placeholder="Your company / firm"></label>
+                <label>Mobile / WhatsApp<input id="sellerMobile" required inputmode="tel" placeholder="+91 98XXXXXXXX"></label>
+                <label>Business email<input id="sellerEmail" required type="email" placeholder="name@company.com"></label>
+                <label>Seller type<select id="sellerType"><option>Manufacturer</option><option>Distributor / Wholesaler</option><option>Service Provider</option><option>Exporter</option><option>Trader / Dealer</option></select></label>
+                <label>Primary category<select id="sellerCategory"><option>Industrial Supplies</option><option>Machinery</option><option>Packaging</option><option>Construction</option><option>Electrical</option><option>Food & Agri</option><option>Business Services</option></select></label>
+                <label>Password<input id="sellerPassword" required type="password" minlength="8" placeholder="Minimum 8 characters"></label>
+                <label>Confirm password<input id="sellerPassword2" required type="password" minlength="8" placeholder="Repeat password"></label>
+                <label class="wide auth-check"><input id="sellerTerms" type="checkbox" required><span>I agree to the supplier terms and confirm that the business information I provide is accurate.</span></label>
+                <button class="btn btn-primary full wide" type="submit">Create account & continue →</button>
+              </form>
+              <p class="auth-note">Production flow will verify the mobile/email before activating the account. No password is sent or stored by this frontend preview.</p>
+            </div>
+            <div class="auth-pane" data-auth-content="login">
+              <div class="seller-account-chip"><span>T</span><div><b>TradeAI Seller Workspace</b><small>Supplier · Manufacturer · Service Provider</small></div></div>
+              <h2>Seller Login</h2><p>Open your opportunities, quotations, orders and business profile.</p>
+              <form class="auth-form" id="sellerLoginForm">
+                <label>Mobile or business email<input id="sellerLoginId" required placeholder="Mobile / email"></label>
+                <label>Password<input id="sellerLoginPassword" required type="password" placeholder="Password"></label>
+                <div style="display:flex;justify-content:space-between;align-items:center;font-size:9px"><label class="auth-check" style="margin:0"><input type="checkbox"><span>Remember me</span></label><button type="button" class="back-link" onclick="showToast('Password recovery will use verified mobile/email')">Forgot password?</button></div>
+                <button class="btn btn-dark full" type="submit">Login to Seller Dashboard →</button>
+              </form>
+              <div class="auth-divider">NEW TO TRADEAI?</div>
+              <button class="btn btn-outline full" type="button" data-switch-auth="signup">Create a supplier account</button>
+              <p class="auth-note">Demo login opens the complete seller dashboard. Production authentication will be connected to the backend next.</p>
+            </div>
+            <div class="account-created" id="sellerAccountCreated">
+              <div class="success-icon">✓</div><h2>Account created</h2><p>Your seller workspace is ready. Complete the business profile and verification steps so matching can use your real capabilities.</p>
+              <button class="btn btn-primary" id="continueSellerOnboarding">Complete business profile →</button>
+            </div>
+          </div>
+        </div>
+      </div>
     </section>
 
     <!-- SELLER ONBOARDING -->
@@ -371,6 +439,32 @@ function money(n){return '₹'+Math.round(n).toLocaleString('en-IN')}
 function calcQuote(){const unit=parseFloat($('#quoteUnit')?.value)||0,qty=parseFloat($('#quoteQty')?.value)||0,mob=parseFloat($('#quoteFreight')?.value)||0,gst=parseFloat($('#quoteGst')?.value)||0;const base=unit*qty;const tax=(base+mob)*gst/100;if($('#quoteBase'))$('#quoteBase').textContent=money(base);if($('#quoteMob'))$('#quoteMob').textContent=money(mob);if($('#quoteTax'))$('#quoteTax').textContent=money(tax);if($('#quoteTotal'))$('#quoteTotal').textContent=money(base+mob+tax)}
 ['quoteUnit','quoteQty','quoteFreight','quoteGst'].forEach(id=>{const el=$('#'+id);if(el)el.addEventListener('input',calcQuote)});
 window.openQuoteBuilder=()=>{$('#quoteModal').classList.add('show');calcQuote()};
+
+
+/* Seller account entry flow */
+function setAuthPane(tab){
+  $('.auth-tabs [data-auth-pane]').forEach(b=>b.classList.toggle('active',b.dataset.authPane===tab));
+  $('[data-auth-content]').forEach(p=>p.classList.toggle('active',p.dataset.authContent===tab));
+  if($('#sellerAccountCreated')) $('#sellerAccountCreated').classList.remove('show');
+}
+$('[data-auth-pane]').forEach(b=>b.addEventListener('click',()=>setAuthPane(b.dataset.authPane)));
+$('[data-switch-auth]').forEach(b=>b.addEventListener('click',()=>setAuthPane(b.dataset.switchAuth)));
+$('[data-auth-tab]').forEach(b=>b.addEventListener('click',()=>setTimeout(()=>setAuthPane(b.dataset.authTab),0)));
+if($('#sellerSignupForm')) $('#sellerSignupForm').addEventListener('submit',e=>{
+  e.preventDefault();
+  const p=$('#sellerPassword').value,p2=$('#sellerPassword2').value;
+  if(p!==p2){toast('Passwords do not match');return}
+  if(p.length<8){toast('Use at least 8 characters');return}
+  $('[data-auth-content]').forEach(x=>x.classList.remove('active'));
+  $('.auth-tabs').style.display='none';
+  $('#sellerAccountCreated').classList.add('show');
+});
+if($('#continueSellerOnboarding')) $('#continueSellerOnboarding').onclick=()=>{
+  $('.auth-tabs').style.display='grid'; setAuthPane('signup'); sellerWizardStep=0; renderSellerWizard(); route('seller-onboarding');
+};
+if($('#sellerLoginForm')) $('#sellerLoginForm').addEventListener('submit',e=>{
+  e.preventDefault(); setSellerTab('overview'); toast('Seller workspace opened'); route('seller-dashboard');
+});
 
 route(location.hash.slice(1)||'home');
 
