@@ -290,7 +290,7 @@ def list_matches(rid:str):
 def seller_opportunities(authorization:str|None=Header(default=None)):
     with engine.connect() as c:
         sid=auth_seller(c,authorization)
-        q=select(rfqs.c.id.label("rfq_id"),rfqs.c.requirement,rfqs.c.category,rfqs.c.quantity,rfqs.c.location,rfqs.c.timeline,rfqs.c.intent_score,rfqs.c.status,matches.c.match_score,matches.c.batch,matches.c.status.label("match_status"),matches.c.released_at).join(matches,matches.c.rfq_id==rfqs.c.id).where(matches.c.supplier_id==sid).order_by(matches.c.released_at.desc())
+        q=select(rfqs.c.id.label("rfq_id"),rfqs.c.requirement,rfqs.c.category,rfqs.c.quantity,rfqs.c.location,rfqs.c.timeline,rfqs.c.budget,rfqs.c.intent_score,rfqs.c.status,matches.c.match_score,matches.c.batch,matches.c.status.label("match_status"),matches.c.released_at).join(matches,matches.c.rfq_id==rfqs.c.id).where(matches.c.supplier_id==sid).order_by(matches.c.released_at.desc())
         return [rowdict(x) for x in c.execute(q).all()]
 
 @app.get("/api/sellers/{sid}/opportunities")
