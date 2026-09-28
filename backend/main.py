@@ -1,9 +1,9 @@
 from __future__ import annotations
-import hashlib, hmac, json, os, secrets, uuid
+import hashlib, hmac, json, os, re, secrets, uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy import (
@@ -11,6 +11,7 @@ from sqlalchemy import (
     UniqueConstraint, and_, create_engine, delete, func, insert, or_, select, update
 )
 from sqlalchemy.engine import Engine
+import httpx
 
 DATABASE_URL=os.getenv("DATABASE_URL","sqlite:///./tradeai.db")
 if DATABASE_URL.startswith("postgres://"):
@@ -22,6 +23,17 @@ ENV=os.getenv("TRADEAI_ENV","development")
 OTP_TTL=int(os.getenv("TRADEAI_OTP_TTL_MINUTES","10"))
 THRESHOLD=int(os.getenv("TRADEAI_QUALIFIED_THRESHOLD","60"))
 ADMIN_TOKEN=os.getenv("TRADEAI_ADMIN_TOKEN","")
+OPENAI_API_KEY=os.getenv("OPENAI_API_KEY","").strip()
+AI_MODEL=os.getenv("TRADEAI_OPENAI_MODEL","gpt-5").strip()
+AI_MODE=os.getenv("TRADEAI_AI_MODE","auto").strip().lower()
+META_ACCESS_TOKEN=(os.getenv("TRADEAI_WHATSAPP_ACCESS_TOKEN") or os.getenv("WHATSAPP_ACCESS_TOKEN") or "").strip()
+META_PHONE_NUMBER_ID=(os.getenv("TRADEAI_WHATSAPP_PHONE_NUMBER_ID") or os.getenv("WHATSAPP_PHONE_NUMBER_ID") or "").strip()
+META_GRAPH_VERSION=os.getenv("TRADEAI_META_GRAPH_VERSION","v23.0").strip()
+WA_OTP_TEMPLATE=os.getenv("TRADEAI_WA_OTP_TEMPLATE","").strip()
+WA_OTP_LANGUAGE=os.getenv("TRADEAI_WA_OTP_LANGUAGE","en_US").strip()
+WA_RFQ_TEMPLATE=os.getenv("TRADEAI_WA_RFQ_TEMPLATE","").strip()
+WA_RFQ_LANGUAGE=os.getenv("TRADEAI_WA_RFQ_LANGUAGE","en_US").strip()
+WA_VERIFY_TOKEN=os.getenv("TRADEAI_WA_VERIFY_TOKEN","").strip()
 engine:Engine=create_engine(DATABASE_URL,pool_pre_ping=True)
 md=MetaData()
 
@@ -71,6 +83,11 @@ orders=Table("orders",md,Column("id",String(40),primary_key=True),Column("deal_i
     Column("rfq_id",String(40),nullable=False,index=True),Column("quote_id",String(40),nullable=False),Column("supplier_id",String(40),nullable=False,index=True),
     Column("buyer_session_id",String(40),nullable=False,index=True),Column("amount",Float,nullable=False),Column("status",String(40),nullable=False),
     Column("created_at",DateTime(timezone=True),nullable=False),Column("updated_at",DateTime(timezone=True),nullable=False))
+notifications=Table("notifications",md,Column("id",String(40),primary_key=True),Column("kind",String(40),nullable=False,index=True),
+    Column("channel",String(30),nullable=False),Column("recipient",String(40),nullable=False),Column("session_id",String(40),index=True),
+    Column("rfq_id",String(40),index=True),Column("supplier_id",String(40),index=True),Column("provider_message_id",String(160),index=True),
+    Column("status",String(40),nullable=False),Column("error",Text),Column("payload",Text),Column("created_at",DateTime(timezone=True),nullable=False),
+    Column("updated_at",DateTime(timezone=True),nullable=False))
 
 def utcnow(): return datetime.now(timezone.utc)
 def as_utc(dt):
@@ -94,7 +111,7 @@ def init_db():
             c.execute(insert(suppliers),seed)
 
 init_db()
-app=FastAPI(title="TradeAI API",version="1.4.0")
+app=FastAPI(title="TradeAI API",version="1.5.0")
 app.add_middleware(CORSMiddleware,allow_origins=[x.strip() for x in os.getenv("TRADEAI_CORS_ORIGINS","https://tradeai-pgvr.onrender.com,http://localhost:8000,http://127.0.0.1:8000").split(",") if x.strip()],allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
 
 class SessionIn(BaseModel): company:str|None=None
@@ -121,6 +138,10 @@ class SellerDealMessageIn(BaseModel): message:str=Field(min_length=1,max_length=
 class ContactConsentIn(BaseModel): session_id:str; approved:bool
 class BuyerOrderIn(BaseModel): session_id:str; confirm_terms:bool=True
 class OrderStatusIn(BaseModel): status:str=Field(min_length=3,max_length=40)
+class AIQualificationIn(BaseModel):
+    requirement:str=Field(min_length=3,max_length=3000); latest_message:str|None=Field(default=None,max_length=2000)
+    answers:dict[str,str|None]={}; conversation:list[dict[str,str]]=[]
+
 
 def get_rfq(c,rid):
     x=c.execute(select(rfqs).where(rfqs.c.id==rid)).first()
@@ -189,11 +210,162 @@ def sync_registered_supplier(c,sid):
     return vals
 
 @app.get("/")
-def root(): return {"service":"TradeAI API","status":"ok","version":"1.4.0"}
+def root(): return {"service":"TradeAI API","status":"ok","version":"1.5.0"}
 @app.get("/api/health")
 def health():
     with engine.connect() as c: c.execute(select(1)).scalar_one()
-    return {"ok":True,"database":"postgresql" if DATABASE_URL.startswith("postgresql") else "sqlite","qualification_threshold":THRESHOLD}
+    return {"ok":True,"database":"postgresql" if DATABASE_URL.startswith("postgresql") else "sqlite","qualification_threshold":THRESHOLD,
+        "ai":{"mode":AI_MODE,"configured":bool(OPENAI_API_KEY),"model":AI_MODEL if OPENAI_API_KEY else None},
+        "whatsapp":{"configured":bool(META_ACCESS_TOKEN and META_PHONE_NUMBER_ID),"otp_template_configured":bool(WA_OTP_TEMPLATE),"rfq_template_configured":bool(WA_RFQ_TEMPLATE)}}
+
+
+AI_FIELDS=("category","quantity","location","timeline","specifications","budget")
+def clean_field(v):
+    if v is None:return None
+    s=str(v).strip()
+    return s[:500] if s else None
+
+def fallback_qualification(p:AIQualificationIn):
+    fields={k:clean_field(p.answers.get(k)) for k in AI_FIELDS}
+    text=" ".join([p.requirement,p.latest_message or ""]).strip()
+    low=text.lower()
+    if not fields["category"]:
+        category_map=[("epoxy","industrial epoxy flooring"),("cement","cement"),("pouch","printed packaging"),("packag","packaging"),("tank","industrial tanks"),("machine","machinery"),("electrical","electrical supplies"),("flooring","industrial flooring")]
+        fields["category"]=next((v for k,v in category_map if k in low),None)
+    if not fields["quantity"]:
+        m=re.search(r"([\d,]+(?:\.\d+)?\s*(?:bags?|kg|kgs|mt|tons?|tonnes?|pcs?|pieces?|units?|sq\s*ft|sqft|sqm|m2|litres?|liters?|l\b))",text,re.I)
+        if m: fields["quantity"]=m.group(1)
+    if not fields["timeline"]:
+        m=re.search(r"(within\s+\d+\s+(?:days?|weeks?|months?)|by\s+[A-Za-z0-9 ,/-]+|today|tomorrow|this week|urgent(?:ly)?)",text,re.I)
+        if m: fields["timeline"]=m.group(1)[:160]
+    if not fields["location"]:
+        known=["Haridwar","Roorkee","Dehradun","Pantnagar","Rudrapur","Delhi","Noida","Gurugram","Faridabad","Uttarakhand"]
+        hit=next((x for x in known if x.lower() in low),None)
+        if hit: fields["location"]=hit
+    order=["category","quantity","location","timeline","specifications"]
+    prompts={
+        "category":"What exact product, service or project do you need?",
+        "quantity":"What quantity, area or capacity do you need?",
+        "location":"Where should it be delivered or where is the work site?",
+        "timeline":"When do you need it?",
+        "specifications":"Any important grade, brand, dimensions or specifications suppliers should know?"
+    }
+    nxt=next((k for k in order if not fields[k]),None)
+    quick=[]
+    if nxt=="timeline":quick=["This week","Within 14 days","Within 30 days"]
+    elif nxt=="specifications" and "epoxy" in (fields["category"] or "").lower():quick=["3 mm heavy-duty","2 mm standard","Need supplier recommendation"]
+    preview=dict(requirement=p.requirement,**fields); score,reasons,risks=calc_score(preview,False)
+    return {"provider":"rules","ai_active":False,"fields":fields,"next_field":nxt,"next_question":prompts.get(nxt),
+        "quick_options":quick,"ready_for_otp":nxt is None,"intent_score_preview":score,"score_reasons":reasons,"risk_flags":risks}
+
+def extract_response_text(data):
+    for item in data.get("output",[]):
+        if item.get("type")=="message":
+            for part in item.get("content",[]):
+                if part.get("type")=="output_text" and part.get("text"): return part["text"]
+    return data.get("output_text") or ""
+
+def openai_qualification(p:AIQualificationIn):
+    schema={"type":"object","additionalProperties":False,"properties":{
+        "category":{"type":["string","null"]},"quantity":{"type":["string","null"]},"location":{"type":["string","null"]},
+        "timeline":{"type":["string","null"]},"specifications":{"type":["string","null"]},"budget":{"type":["string","null"]},
+        "next_field":{"type":["string","null"]},"next_question":{"type":["string","null"]},
+        "quick_options":{"type":"array","items":{"type":"string"}},"risk_flags":{"type":"array","items":{"type":"string"}}},
+        "required":["category","quantity","location","timeline","specifications","budget","next_field","next_question","quick_options","risk_flags"]}
+    instructions="""You are TradeAI's Indian B2B procurement qualification engine. Extract only facts the buyer stated or that are unambiguous from context; never invent quantity, budget, location, dates, certifications, stock or specifications. Merge the latest answer with previously captured fields. Ask exactly one useful missing question at a time. Core fields are category/product, quantity/size/capacity, delivery/work location, timeline and important specifications. Budget is optional and should not block OTP. Adapt the specification question to the category. Keep questions concise and use the buyer's apparent language (English or Hinglish). Flag obvious spam, contradictory or research-only text, but do not over-flag normal short answers. When all core fields are captured, next_field and next_question must be null."""
+    user={"requirement":p.requirement,"previous_fields":p.answers,"latest_message":p.latest_message,"conversation":p.conversation[-12:]}
+    payload={"model":AI_MODEL,"store":False,"instructions":instructions,"input":json.dumps(user,ensure_ascii=False),
+        "text":{"format":{"type":"json_schema","name":"tradeai_qualification","strict":True,"schema":schema}}}
+    with httpx.Client(timeout=25) as client:
+        r=client.post("https://api.openai.com/v1/responses",headers={"Authorization":"Bearer "+OPENAI_API_KEY,"Content-Type":"application/json"},json=payload)
+        r.raise_for_status(); data=json.loads(extract_response_text(r.json()))
+    fields={k:clean_field(data.get(k) or p.answers.get(k)) for k in AI_FIELDS}
+    preview=dict(requirement=p.requirement,**fields); score,reasons,risks=calc_score(preview,False)
+    risks=list(dict.fromkeys((data.get("risk_flags") or [])+risks))
+    nxt=data.get("next_field")
+    if nxt not in AI_FIELDS or fields.get(nxt): nxt=next((k for k in ("category","quantity","location","timeline","specifications") if not fields[k]),None)
+    question=data.get("next_question") if nxt else None
+    return {"provider":"openai","ai_active":True,"fields":fields,"next_field":nxt,"next_question":question,
+        "quick_options":(data.get("quick_options") or [])[:4],"ready_for_otp":nxt is None,"intent_score_preview":score,"score_reasons":reasons,"risk_flags":risks}
+
+@app.post("/api/ai/qualify")
+def ai_qualify(p:AIQualificationIn):
+    if OPENAI_API_KEY and AI_MODE!="rules":
+        try:return openai_qualification(p)
+        except Exception:
+            if AI_MODE=="openai": raise HTTPException(502,"AI qualification provider is temporarily unavailable")
+    out=fallback_qualification(p)
+    if OPENAI_API_KEY and AI_MODE=="auto":out["provider"]="rules_fallback"
+    return out
+
+def normalize_phone(phone):
+    digits=re.sub(r"\D","",phone or "")
+    if len(digits)==10:digits="91"+digits
+    return digits
+
+def record_notification(c,kind,recipient,status,session_id=None,rfq_id=None,supplier_id=None,provider_message_id=None,error=None,payload=None):
+    nid="ntf-"+uuid.uuid4().hex[:14]; now=utcnow()
+    c.execute(insert(notifications).values(id=nid,kind=kind,channel="whatsapp",recipient=recipient,session_id=session_id,rfq_id=rfq_id,supplier_id=supplier_id,
+        provider_message_id=provider_message_id,status=status,error=(error or "")[:2000] or None,payload=json.dumps(payload or {},ensure_ascii=False)[:8000],created_at=now,updated_at=now))
+    return nid
+
+def whatsapp_template(to,template,language,components):
+    if not (META_ACCESS_TOKEN and META_PHONE_NUMBER_ID and template):
+        return {"configured":False,"status":"not_configured","message_id":None}
+    payload={"messaging_product":"whatsapp","recipient_type":"individual","to":normalize_phone(to),"type":"template",
+        "template":{"name":template,"language":{"code":language},"components":components}}
+    url=f"https://graph.facebook.com/{META_GRAPH_VERSION}/{META_PHONE_NUMBER_ID}/messages"
+    try:
+        with httpx.Client(timeout=20) as client:
+            r=client.post(url,headers={"Authorization":"Bearer "+META_ACCESS_TOKEN,"Content-Type":"application/json"},json=payload)
+            r.raise_for_status(); data=r.json()
+        mid=((data.get("messages") or [{}])[0]).get("id")
+        return {"configured":True,"status":"accepted","message_id":mid,"payload":payload}
+    except httpx.HTTPStatusError as e:
+        detail=e.response.text[:1500] if e.response is not None else str(e)
+        return {"configured":True,"status":"failed","message_id":None,"error":detail,"payload":payload}
+    except Exception as e:
+        return {"configured":True,"status":"failed","message_id":None,"error":str(e)[:1500],"payload":payload}
+
+def send_otp_whatsapp(phone,code):
+    components=[{"type":"body","parameters":[{"type":"text","text":code}]},
+        {"type":"button","sub_type":"url","index":"0","parameters":[{"type":"text","text":code}]}]
+    return whatsapp_template(phone,WA_OTP_TEMPLATE,WA_OTP_LANGUAGE,components)
+
+def notify_supplier_rfq(c,supplier_id,rfq):
+    a=rowdict(c.execute(select(seller_accounts).where(seller_accounts.c.id==supplier_id)).first())
+    if not a or not WA_RFQ_TEMPLATE:return None
+    components=[{"type":"body","parameters":[{"type":"text","text":a["business_name"]},{"type":"text","text":rfq["requirement"][:500]},{"type":"text","text":rfq.get("location") or "Not specified"}]}]
+    result=whatsapp_template(a["mobile"],WA_RFQ_TEMPLATE,WA_RFQ_LANGUAGE,components)
+    record_notification(c,"rfq_released",a["mobile"],result["status"],rfq_id=rfq["id"],supplier_id=supplier_id,provider_message_id=result.get("message_id"),error=result.get("error"),payload=result.get("payload"))
+    return result
+
+@app.get("/api/webhooks/whatsapp")
+def whatsapp_verify(request:Request):
+    q=request.query_params
+    if q.get("hub.mode")=="subscribe" and WA_VERIFY_TOKEN and secrets.compare_digest(q.get("hub.verify_token",""),WA_VERIFY_TOKEN):
+        return int(q.get("hub.challenge","0"))
+    raise HTTPException(403,"Webhook verification failed")
+
+@app.post("/api/webhooks/whatsapp")
+async def whatsapp_webhook(request:Request):
+    body=await request.json(); updated=0
+    with engine.begin() as c:
+        for entry in body.get("entry",[]):
+            for change in entry.get("changes",[]):
+                for status in (change.get("value",{}).get("statuses") or []):
+                    mid=status.get("id"); state=status.get("status")
+                    if mid and state:
+                        result=c.execute(update(notifications).where(notifications.c.provider_message_id==mid).values(status=state,updated_at=utcnow()))
+                        updated+=result.rowcount or 0
+    return {"received":True,"statuses_updated":updated}
+
+@app.get("/api/notifications/{session_id}")
+def session_notifications(session_id:str):
+    with engine.connect() as c:
+        if not c.execute(select(buyer_sessions.c.id).where(buyer_sessions.c.id==session_id)).first():raise HTTPException(404,"Buyer session not found")
+        q=select(notifications.c.id,notifications.c.kind,notifications.c.channel,notifications.c.status,notifications.c.created_at,notifications.c.updated_at).where(notifications.c.session_id==session_id).order_by(notifications.c.created_at.desc())
+        return [rowdict(x) for x in c.execute(q).all()]
 
 @app.post("/api/buyer/sessions",status_code=201)
 def create_session(p:SessionIn):
@@ -228,7 +400,12 @@ def otp_send(p:OTPIn):
         if not c.execute(select(buyer_sessions.c.id).where(buyer_sessions.c.id==p.session_id)).first(): raise HTTPException(404,"Buyer session not found")
         c.execute(update(buyer_sessions).where(buyer_sessions.c.id==p.session_id).values(phone=p.phone))
         c.execute(delete(otp_codes).where(otp_codes.c.session_id==p.session_id)); c.execute(insert(otp_codes).values(session_id=p.session_id,code=code,expires_at=exp,attempts=0))
-    out={"sent":True,"channel":"whatsapp_ready","expires_in_minutes":OTP_TTL}
+        delivery=send_otp_whatsapp(p.phone,code)
+        status=delivery["status"] if delivery["configured"] else ("development" if ENV!="production" else "not_configured")
+        record_notification(c,"buyer_otp",p.phone,status,session_id=p.session_id,provider_message_id=delivery.get("message_id"),error=delivery.get("error"),payload=delivery.get("payload"))
+        if ENV=="production" and not delivery["configured"]: raise HTTPException(503,"WhatsApp OTP is not configured")
+        if ENV=="production" and delivery["status"]=="failed": raise HTTPException(502,"WhatsApp OTP delivery was rejected by provider")
+    out={"sent":True,"channel":"whatsapp" if delivery["configured"] else "development","delivery_status":status,"expires_in_minutes":OTP_TTL}
     if ENV!="production":out["dev_otp"]=code
     return out
 
@@ -295,7 +472,7 @@ def release(rid:str,batch:int=1):
         allsup=[rowdict(x) for x in c.execute(select(suppliers).where(suppliers.c.verification!="Identity Pending")).all() if rowdict(x)["id"] not in used]
         ranked=sorted([(supplier_score(r,s),s) for s in allsup],key=lambda x:x[0],reverse=True)[:3 if batch==1 else 2]; out=[]
         for score,s in ranked:
-            mid="mat-"+uuid.uuid4().hex[:12]; c.execute(insert(matches).values(id=mid,rfq_id=rid,supplier_id=s["id"],batch=batch,match_score=score,status="released",released_at=utcnow())); out.append({"match_id":mid,"supplier_id":s["id"],"supplier_name":s["name"],"match_score":score,"verification":s["verification"],"trade_score":s["trade_score"]})
+            mid="mat-"+uuid.uuid4().hex[:12]; c.execute(insert(matches).values(id=mid,rfq_id=rid,supplier_id=s["id"],batch=batch,match_score=score,status="released",released_at=utcnow())); notify_supplier_rfq(c,s["id"],r); out.append({"match_id":mid,"supplier_id":s["id"],"supplier_name":s["name"],"match_score":score,"verification":s["verification"],"trade_score":s["trade_score"]})
         return {"rfq_id":rid,"batch":batch,"matches":out}
 
 @app.get("/api/rfqs/{rid}/matches")
@@ -522,4 +699,4 @@ def admin_verify_seller(sid:str,p:SellerVerificationIn,x_admin_token:str|None=He
 @app.get("/api/admin/overview")
 def admin():
     with engine.connect() as c:
-        return {"buyer_sessions":c.execute(select(func.count()).select_from(buyer_sessions)).scalar_one(),"seller_accounts":c.execute(select(func.count()).select_from(seller_accounts)).scalar_one(),"rfqs":c.execute(select(func.count()).select_from(rfqs)).scalar_one(),"qualified_rfqs":c.execute(select(func.count()).select_from(rfqs).where(rfqs.c.intent_score>=THRESHOLD)).scalar_one(),"released_matches":c.execute(select(func.count()).select_from(matches)).scalar_one(),"quotes":c.execute(select(func.count()).select_from(quotes)).scalar_one(),"deal_rooms":c.execute(select(func.count()).select_from(deal_rooms)).scalar_one(),"orders":c.execute(select(func.count()).select_from(orders)).scalar_one(),"controls":{"qualification_threshold":THRESHOLD,"first_batch":3,"next_batch":2,"buyer_contact_protected":True}}
+        return {"buyer_sessions":c.execute(select(func.count()).select_from(buyer_sessions)).scalar_one(),"seller_accounts":c.execute(select(func.count()).select_from(seller_accounts)).scalar_one(),"rfqs":c.execute(select(func.count()).select_from(rfqs)).scalar_one(),"qualified_rfqs":c.execute(select(func.count()).select_from(rfqs).where(rfqs.c.intent_score>=THRESHOLD)).scalar_one(),"released_matches":c.execute(select(func.count()).select_from(matches)).scalar_one(),"quotes":c.execute(select(func.count()).select_from(quotes)).scalar_one(),"deal_rooms":c.execute(select(func.count()).select_from(deal_rooms)).scalar_one(),"orders":c.execute(select(func.count()).select_from(orders)).scalar_one(),"notifications":c.execute(select(func.count()).select_from(notifications)).scalar_one(),"controls":{"qualification_threshold":THRESHOLD,"first_batch":3,"next_batch":2,"buyer_contact_protected":True}}
