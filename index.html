@@ -372,6 +372,7 @@ function route(name){
   $$('.mobile-dock button').forEach(b=>b.classList.toggle('active',b.dataset.go===name));
   if(name==='buyer') resetBuyer(false);
   if(name==='seller-dashboard' && localStorage.getItem('tradeai_seller_token')) loadSellerDashboard();
+  if(name==='quotes' && state.rfqId && state.buyerSession) loadBuyerQuotes();
 }
 $$('[data-go]').forEach(el=>el.addEventListener('click',()=>route(el.dataset.go)));
 $$('[data-nav]').forEach(el=>el.addEventListener('click',e=>{e.preventDefault();route(el.dataset.nav)}));
@@ -402,8 +403,8 @@ function openLiveOpportunity(i){
 async function loadSellerDashboard(){
   const token=localStorage.getItem('tradeai_seller_token'); if(!token)return;
   try{
-    const [me,opps]=await Promise.all([api('/api/seller/me'),api('/api/seller/opportunities')]);
-    const seller=me.seller||{}, profile=me.profile||{}; liveSellerOpportunities=Array.isArray(opps)?opps:[];
+    const [me,opps,sellerQuotes]=await Promise.all([api('/api/seller/me'),api('/api/seller/opportunities'),api('/api/seller/quotes')]);
+    const seller=me.seller||{}, profile=me.profile||{}; liveSellerOpportunities=Array.isArray(opps)?opps:[]; const liveQuotes=Array.isArray(sellerQuotes)?sellerQuotes:[];
     localStorage.setItem('tradeai_seller',JSON.stringify(seller));
     $('#sellerCompanyMini').textContent=seller.business_name||'Supplier account';
     $('#sellerVerificationMini').textContent=profile.verification_level||'Verification pending'; if($('#sellerVerificationBadge')) $('#sellerVerificationBadge').textContent=profile.verification_level||'Verification pending';
@@ -416,6 +417,8 @@ async function loadSellerDashboard(){
     $('#opportunityList').innerHTML=n?liveSellerOpportunities.slice(0,4).map((o,i)=>`<div class="op-row" data-live-op="${i}"><div><h4>${esc(o.requirement)}</h4><p>${esc(o.location||'Location not specified')} · ${esc(o.timeline||'Timeline not specified')}</p></div><span class="score">${o.intent_score}/100<br><small>INTENT</small></span><span>${o.match_score}%<br><small>MATCH</small></span><strong>${esc(o.budget||'Qualified RFQ')}</strong></div>`).join(''):empty;
     $('#sellerOpportunityTableBody').innerHTML=n?liveSellerOpportunities.map((o,i)=>`<tr><td><b>${esc(o.requirement)}</b><br><small>${esc(o.location||'—')} · ${esc(o.timeline||'—')}</small></td><td><span class="intent-mini"><i></i>${o.intent_score}/100</span></td><td><b>${o.match_score}%</b></td><td>${esc(o.budget||'Not specified')}</td><td>Batch ${o.batch}</td><td><button class="btn btn-dark small" data-live-op="${i}">Open</button></td></tr>`).join(''):`<tr><td colspan="6" style="padding:24px;color:#64748b">No live matched RFQs yet. Matching starts after verification approval.</td></tr>`;
     $('[data-live-op]').forEach(el=>el.onclick=()=>openLiveOpportunity(Number(el.dataset.liveOp)));
+    $('#sellerQuoteMetric').textContent=liveQuotes.length; $('#sellerQuoteMetricSub').textContent=liveQuotes.length?'Live quotations sent':'No quotations sent yet';
+    $('#sellerQuoteTableBody').innerHTML=liveQuotes.length?liveQuotes.map(q=>`<tr><td><b>${esc(q.id)}</b></td><td>${esc(q.requirement)}</td><td>${money(q.landed_price)}</td><td>${q.delivery_days} days</td><td><span class="status qualified">SENT</span></td><td>${new Date(q.created_at).toLocaleDateString('en-IN')}</td></tr>`).join(''):`<tr><td colspan="6" style="padding:24px;color:#64748b">No live quotations sent yet. Open a matched opportunity to send one.</td></tr>`;
   }catch(e){
     if(/login|required|expired|invalid/i.test(e.message)){localStorage.removeItem('tradeai_seller_token');toast('Seller session expired. Please login again.')}
     else toast('Dashboard: '+e.message);
@@ -474,9 +477,25 @@ $('#chatSend').onclick=sendChat;$('#chatInput').addEventListener('keydown',e=>{i
 $('#heroStart').onclick=()=>{if(!$('#heroRequirement').value.trim()){$('#heroRequirement').value='Need 20,000 sq ft industrial epoxy flooring in SIDCUL Haridwar within 14 days'}route('buyer');setTimeout(()=>{resetBuyer(true)},100)};
 
 
-$$('#quoteChoices .choice-pill').forEach(btn=>btn.addEventListener('click',()=>{ $$('#quoteChoices .choice-pill').forEach(x=>x.classList.remove('active'));btn.classList.add('active');$('#decisionText').textContent=btn.dataset.choice+' is shortlisted';toast(btn.dataset.choice+' shortlisted — no contact shared'); }));
-$('#requestNegotiation').onclick=()=>toast('Negotiation request created in frontend demo');
-$('#quoteDemoBtn').onclick=()=>openQuoteBuilder();$('#modalClose').onclick=()=>$('#quoteModal').classList.remove('show');$('#quoteModal').onclick=e=>{if(e.target.id==='quoteModal')e.currentTarget.classList.remove('show')};$('#sendQuoteDemo').onclick=()=>{$('#quoteModal').classList.remove('show');toast('Demo quotation created — backend will be connected later')};
+function bindQuoteChoices(){
+  $('#quoteChoices .choice-pill').forEach(btn=>btn.onclick=()=>{ $('#quoteChoices .choice-pill').forEach(x=>x.classList.remove('active'));btn.classList.add('active');$('#decisionText').textContent=btn.dataset.choice+' is shortlisted';toast(btn.dataset.choice+' shortlisted — contact remains protected'); });
+}
+async function loadBuyerQuotes(){
+  try{
+    const data=await api('/api/buyer/rfqs/'+state.rfqId+'/quotes/compare?session_id='+encodeURIComponent(state.buyerSession));
+    const qs=data.quotes||[], h=data.objective_highlights||{};
+    const low=qs.find(q=>q.id===h.lowest_landed_price_quote_id), fast=qs.find(q=>q.id===h.fastest_delivery_quote_id), warranty=qs.find(q=>q.id===h.longest_warranty_quote_id);
+    $('#quoteSummary').innerHTML=`<div><span>${qs.length}</span><small>QUOTES RECEIVED</small></div><div><span>${low?money(low.landed_price):'—'}</span><small>LOWEST LANDED</small></div><div><span>${fast?fast.delivery_days+' days':'—'}</span><small>FASTEST DELIVERY</small></div><div><span>${warranty?warranty.warranty_months+' months':'—'}</span><small>LONGEST WARRANTY</small></div>`;
+    if(!qs.length){$('#quoteCompareContainer').innerHTML='<div style="padding:32px;color:var(--muted)">No supplier quotation has arrived yet. Your matched suppliers can respond from their seller dashboard.</div>';$('#quoteChoices').innerHTML='';$('#decisionText').textContent='Waiting for supplier quotations';return}
+    const cell=(q,val,kind)=>{const best=(kind==='landed'&&q.id===h.lowest_landed_price_quote_id)||(kind==='delivery'&&q.id===h.fastest_delivery_quote_id)||(kind==='warranty'&&q.id===h.longest_warranty_quote_id);return `<td class="${best?'best':''}">${val}${best?'<em>'+(kind==='landed'?'Lowest':kind==='delivery'?'Fastest':'Longest')+'</em>':''}</td>`};
+    const head=qs.map(q=>`<th>${esc(q.supplier_name)} <span>${q.match_score}% match</span></th>`).join('');
+    const row=(label,fn,kind='')=>`<tr><td>${label}</td>${qs.map(q=>cell(q,fn(q),kind)).join('')}</tr>`;
+    $('#quoteCompareContainer').innerHTML=`<table class="quote-table"><thead><tr><th>Comparison</th>${head}</tr></thead><tbody>${row('Base price',q=>money(q.unit_price*q.quantity))}${row('Freight / mobilization',q=>q.freight?money(q.freight):'Included')}${row('Landed price',q=>money(q.landed_price),'landed')}${row('Delivery / completion',q=>q.delivery_days+' days','delivery')}${row('Warranty',q=>q.warranty_months+' months','warranty')}${row('Payment terms',q=>esc(q.payment_terms||'Not specified'))}${row('Trade score',q=>q.trade_score+' / 100')}</tbody></table>`;
+    $('#quoteChoices').innerHTML=qs.map(q=>`<button class="choice-pill" data-choice="${esc(q.supplier_name)}">Shortlist ${esc(q.supplier_name)}</button>`).join(''); bindQuoteChoices(); $('#decisionText').textContent='Choose a quotation to shortlist';
+  }catch(e){toast('Quotes: '+e.message)}
+}
+$('#requestNegotiation').onclick=()=>toast('Negotiation workflow is the next transaction milestone');
+$('#quoteDemoBtn').onclick=()=>openQuoteBuilder();$('#modalClose').onclick=()=>$('#quoteModal').classList.remove('show');$('#quoteModal').onclick=e=>{if(e.target.id==='quoteModal')e.currentTarget.classList.remove('show')};
 
 
 // Complete seller onboarding wizard
@@ -514,7 +533,22 @@ $$('.toggle').forEach(b=>b.onclick=()=>{b.classList.toggle('on');toast('Demo con
 function money(n){return '₹'+Math.round(n).toLocaleString('en-IN')}
 function calcQuote(){const unit=parseFloat($('#quoteUnit')?.value)||0,qty=parseFloat($('#quoteQty')?.value)||0,mob=parseFloat($('#quoteFreight')?.value)||0,gst=parseFloat($('#quoteGst')?.value)||0;const base=unit*qty;const tax=(base+mob)*gst/100;if($('#quoteBase'))$('#quoteBase').textContent=money(base);if($('#quoteMob'))$('#quoteMob').textContent=money(mob);if($('#quoteTax'))$('#quoteTax').textContent=money(tax);if($('#quoteTotal'))$('#quoteTotal').textContent=money(base+mob+tax)}
 ['quoteUnit','quoteQty','quoteFreight','quoteGst'].forEach(id=>{const el=$('#'+id);if(el)el.addEventListener('input',calcQuote)});
-window.openQuoteBuilder=()=>{$('#quoteModal').classList.add('show');calcQuote()};
+window.openQuoteBuilder=()=>{
+  if(!activeSellerOpportunity){setSellerTab('opportunities');route('seller-dashboard');toast('Open a matched opportunity before creating a quotation');return}
+  $('#quoteModalTitle').textContent='Build quotation for '+activeSellerOpportunity.rfq_id;
+  const q=String(activeSellerOpportunity.quantity||'').replace(/,/g,'').match(/[\d.]+/); if(q) $('#quoteQty').value=q[0];
+  $('#quoteModal').classList.add('show');calcQuote();
+};
+$('#sendQuoteDemo').onclick=async()=>{
+  if(!activeSellerOpportunity){toast('Open a matched opportunity first');return}
+  const b=$('#sendQuoteDemo'); b.disabled=true;b.textContent='Sending…';
+  try{
+    const payload={unit_price:Number($('#quoteUnit').value),quantity:Number($('#quoteQty').value),tax_percent:Number($('#quoteGst').value),freight:Number($('#quoteFreight').value),delivery_days:Number($('#quoteDelivery').value),warranty_months:Number($('#quoteWarranty').value),payment_terms:$('#quotePayment').value.trim(),validity_days:Number($('#quoteValidity').value),notes:$('#quoteNotes').value.trim()};
+    const sent=await api('/api/seller/rfqs/'+activeSellerOpportunity.rfq_id+'/quotes',{method:'POST',body:JSON.stringify(payload)});
+    $('#quoteModal').classList.remove('show');toast('Quotation sent · '+money(sent.landed_price)+' landed total');await loadSellerDashboard();setSellerTab('quotations');route('seller-dashboard');
+  }catch(e){toast('Quote: '+e.message)}
+  finally{b.disabled=false;b.textContent='Send quotation'}
+};
 
 
 /* Seller account entry flow */
