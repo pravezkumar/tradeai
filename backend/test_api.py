@@ -287,3 +287,55 @@ def test_admin_controls_and_automatic_second_batch():
     assert any(x["rfq_id"] == rid and x["batch"] == 2 for x in routed.json()["expanded"])
     all_matches = client.get(f"/api/rfqs/{rid}/matches").json()
     assert len([x for x in all_matches if x["batch"] == 2]) >= 1
+
+
+def test_supplier_question_and_call_require_buyer_consent():
+    login = client.post("/api/seller/login", json={"login": "cement@test.local", "password": "TradeAITest123"}).json()
+    headers = {"Authorization": "Bearer " + login["access_token"]}
+    s = new_buyer()
+    rfq = full_rfq(s)
+    rid = rfq["id"]
+    phone = "+919999999989"
+    client.post("/api/otp/send", json={"session_id": s, "phone": phone})
+    client.post("/api/otp/verify", json={"session_id": s, "code": "123456"})
+    client.post(f"/api/rfqs/{rid}/matches/release?batch=1")
+    client.post(f"/api/rfqs/{rid}/matches/release?batch=2")
+
+    question = client.post(f"/api/seller/rfqs/{rid}/requests", headers=headers, json={
+        "kind": "ask_question", "message": "Can you accept delivery in two lots?"
+    })
+    assert question.status_code == 201 and question.json()["status"] == "pending"
+
+    call = client.post(f"/api/seller/rfqs/{rid}/requests", headers=headers, json={
+        "kind": "request_call", "message": "Please approve a short technical call."
+    })
+    assert call.status_code == 201 and call.json()["contact_consent"] is False
+    call_id = call.json()["id"]
+
+    seller_before = client.get("/api/seller/requests", headers=headers).json()
+    pending_call = next(x for x in seller_before if x["id"] == call_id)
+    assert pending_call["buyer_contact"] is None
+
+    buyer_inbox = client.get(f"/api/buyer/requests?session_id={s}")
+    assert buyer_inbox.status_code == 200
+    assert len([x for x in buyer_inbox.json() if x["rfq_id"] == rid]) == 2
+
+    answered = client.put(f"/api/buyer/requests/{question.json()['id']}", json={
+        "session_id": s, "action": "reply", "message": "Yes, two lots are acceptable."
+    })
+    assert answered.status_code == 200 and answered.json()["status"] == "answered"
+
+    approved = client.put(f"/api/buyer/requests/{call_id}", json={
+        "session_id": s, "action": "approve"
+    })
+    assert approved.status_code == 200 and approved.json()["contact_shared"] is True
+
+    seller_after = client.get("/api/seller/requests", headers=headers).json()
+    approved_call = next(x for x in seller_after if x["id"] == call_id)
+    assert approved_call["buyer_contact"] == phone
+
+    other = new_buyer()
+    forbidden = client.put(f"/api/buyer/requests/{call_id}", json={
+        "session_id": other, "action": "decline"
+    })
+    assert forbidden.status_code == 403
