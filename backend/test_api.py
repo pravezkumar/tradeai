@@ -221,3 +221,69 @@ def test_adaptive_qualification_fallback():
     assert "500 bags" in data["fields"]["quantity"]
     assert data["fields"]["location"] == "Roorkee"
     assert data["next_field"] == "specifications"
+
+
+def test_duplicate_verified_mobile_is_held_for_admin_review():
+    s1 = new_buyer()
+    r1 = full_rfq(s1)
+    client.post("/api/otp/send", json={"session_id": s1, "phone": "+919999999991"})
+    client.post("/api/otp/verify", json={"session_id": s1, "code": "123456"})
+
+    s2 = new_buyer()
+    r2 = full_rfq(s2)
+    client.post("/api/otp/send", json={"session_id": s2, "phone": "+919999999991"})
+    verified = client.post("/api/otp/verify", json={"session_id": s2, "code": "123456"})
+    assert verified.status_code == 200
+    detail = client.get(f"/api/rfqs/{r2['id']}").json()
+    assert detail["fraud"]["decision"] == "review"
+    assert detail["status"] == "manual_review"
+    held = client.post(f"/api/rfqs/{r2['id']}/matches/release?batch=1")
+    assert held.status_code == 409
+
+    approved = client.put(
+        f"/api/admin/rfqs/{r2['id']}/moderation",
+        headers={"X-Admin-Token": "test-admin-token"},
+        json={"action": "approve", "note": "Verified repeat procurement"}
+    )
+    assert approved.status_code == 200
+    released = client.post(f"/api/rfqs/{r2['id']}/matches/release?batch=1")
+    assert released.status_code == 200
+
+
+def test_admin_controls_and_automatic_second_batch():
+    unauth = client.get("/api/admin/overview")
+    assert unauth.status_code == 401
+    headers = {"X-Admin-Token": "test-admin-token"}
+    settings = client.put("/api/admin/settings", headers=headers, json={
+        "first_batch": 3, "next_batch": 2, "auto_expand_minutes": 1,
+        "min_responses": 2, "max_batches": 3, "duplicate_screening": True, "auto_expand": True
+    })
+    assert settings.status_code == 200
+
+    s = new_buyer()
+    rfq = client.post("/api/rfqs", json={
+        "session_id": s,
+        "requirement": "Need industrial electrical panels for a new warehouse project",
+        "category": "electrical",
+        "quantity": "12 panels",
+        "location": "Haridwar Uttarakhand",
+        "timeline": "within 14 days",
+        "specifications": "415V distribution panels"
+    }).json()
+    rid = rfq["id"]
+    client.post("/api/otp/send", json={"session_id": s, "phone": "+919999999990"})
+    client.post("/api/otp/verify", json={"session_id": s, "code": "123456"})
+    first = client.post(f"/api/rfqs/{rid}/matches/release?batch=1")
+    assert first.status_code == 200 and len(first.json()["matches"]) == 3
+
+    from datetime import timedelta
+    from sqlalchemy import update
+    from main import engine, matches, utcnow
+    with engine.begin() as db:
+        db.execute(update(matches).where(matches.c.rfq_id == rid).values(released_at=utcnow()-timedelta(minutes=2)))
+
+    routed = client.post("/api/admin/routing/run", headers=headers)
+    assert routed.status_code == 200
+    assert any(x["rfq_id"] == rid and x["batch"] == 2 for x in routed.json()["expanded"])
+    all_matches = client.get(f"/api/rfqs/{rid}/matches").json()
+    assert len([x for x in all_matches if x["batch"] == 2]) >= 1
