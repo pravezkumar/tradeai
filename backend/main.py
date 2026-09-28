@@ -84,7 +84,7 @@ def init_db():
             c.execute(insert(suppliers),seed)
 
 init_db()
-app=FastAPI(title="TradeAI API",version="1.2.0")
+app=FastAPI(title="TradeAI API",version="1.3.0")
 app.add_middleware(CORSMiddleware,allow_origins=[x.strip() for x in os.getenv("TRADEAI_CORS_ORIGINS","https://tradeai-pgvr.onrender.com,http://localhost:8000,http://127.0.0.1:8000").split(",") if x.strip()],allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
 
 class SessionIn(BaseModel): company:str|None=None
@@ -103,6 +103,8 @@ class SellerProfileIn(BaseModel):
     capabilities:list[str]=[]; service_locations:list[str]=[]; capacity:str|None=None; moq:str|None=None
 class QuoteIn(BaseModel):
     supplier_id:str; unit_price:float=Field(gt=0); quantity:float=Field(default=1,gt=0); tax_percent:float=Field(default=0,ge=0,le=100); freight:float=Field(default=0,ge=0); delivery_days:int=Field(gt=0); warranty_months:int=Field(default=0,ge=0); payment_terms:str|None=None; validity_days:int=Field(default=7,gt=0); notes:str|None=None
+class SellerQuoteIn(BaseModel):
+    unit_price:float=Field(gt=0); quantity:float=Field(default=1,gt=0); tax_percent:float=Field(default=0,ge=0,le=100); freight:float=Field(default=0,ge=0); delivery_days:int=Field(gt=0); warranty_months:int=Field(default=0,ge=0); payment_terms:str|None=None; validity_days:int=Field(default=7,gt=0); notes:str|None=None
 
 def get_rfq(c,rid):
     x=c.execute(select(rfqs).where(rfqs.c.id==rid)).first()
@@ -171,7 +173,7 @@ def sync_registered_supplier(c,sid):
     return vals
 
 @app.get("/")
-def root(): return {"service":"TradeAI API","status":"ok","version":"1.2.0"}
+def root(): return {"service":"TradeAI API","status":"ok","version":"1.3.0"}
 @app.get("/api/health")
 def health():
     with engine.connect() as c: c.execute(select(1)).scalar_one()
@@ -300,6 +302,37 @@ def opportunities(sid:str):
         q=select(rfqs.c.id.label("rfq_id"),rfqs.c.requirement,rfqs.c.category,rfqs.c.quantity,rfqs.c.location,rfqs.c.timeline,rfqs.c.intent_score,rfqs.c.status,matches.c.match_score,matches.c.batch,matches.c.status.label("match_status")).join(matches,matches.c.rfq_id==rfqs.c.id).where(matches.c.supplier_id==sid).order_by(matches.c.released_at.desc())
         return [rowdict(x) for x in c.execute(q).all()]
 
+@app.post("/api/seller/rfqs/{rid}/quotes",status_code=201)
+def seller_quote(rid:str,p:SellerQuoteIn,authorization:str|None=Header(default=None)):
+    with engine.begin() as c:
+        sid=auth_seller(c,authorization); get_rfq(c,rid)
+        if not c.execute(select(matches.c.id).where(matches.c.rfq_id==rid,matches.c.supplier_id==sid)).first(): raise HTTPException(403,"This RFQ has not been released to your supplier account")
+        x=p.model_dump(); existing=c.execute(select(quotes.c.id).where(quotes.c.rfq_id==rid,quotes.c.supplier_id==sid).order_by(quotes.c.created_at.desc())).scalar()
+        if existing:
+            c.execute(update(quotes).where(quotes.c.id==existing).values(**x,created_at=utcnow())); qid=existing; created=False
+        else:
+            qid="quo-"+uuid.uuid4().hex[:14]; c.execute(insert(quotes).values(id=qid,rfq_id=rid,supplier_id=sid,created_at=utcnow(),**x)); created=True
+        c.execute(update(matches).where(matches.c.rfq_id==rid,matches.c.supplier_id==sid).values(status="quoted"))
+        landed=round(x["unit_price"]*x["quantity"]*(1+x["tax_percent"]/100)+x["freight"],2)
+        return {"quote_id":qid,"rfq_id":rid,"supplier_id":sid,"landed_price":landed,"created":created,"status":"sent"}
+
+@app.get("/api/seller/quotes")
+def seller_quotes(authorization:str|None=Header(default=None)):
+    with engine.connect() as c:
+        sid=auth_seller(c,authorization)
+        q=select(quotes,rfqs.c.requirement,rfqs.c.location).join(rfqs,rfqs.c.id==quotes.c.rfq_id).where(quotes.c.supplier_id==sid).order_by(quotes.c.created_at.desc())
+        out=[]
+        for r in c.execute(q).all():
+            x=rowdict(r); x["landed_price"]=round(x["unit_price"]*x["quantity"]*(1+x["tax_percent"]/100)+x["freight"],2); x["status"]="sent"; out.append(x)
+        return out
+
+@app.get("/api/buyer/rfqs/{rid}/quotes/compare")
+def buyer_compare(rid:str,session_id:str):
+    with engine.connect() as c:
+        r=get_rfq(c,rid)
+        if r["session_id"]!=session_id: raise HTTPException(403,"RFQ does not belong to this buyer session")
+        return build_quote_comparison(c,rid)
+
 @app.post("/api/rfqs/{rid}/quotes",status_code=201)
 def quote(rid:str,p:QuoteIn):
     qid="quo-"+uuid.uuid4().hex[:14]
@@ -309,14 +342,17 @@ def quote(rid:str,p:QuoteIn):
         x=p.model_dump(); c.execute(insert(quotes).values(id=qid,rfq_id=rid,created_at=utcnow(),**x))
         return {"quote_id":qid,"landed_price":round(x["unit_price"]*x["quantity"]*(1+x["tax_percent"]/100)+x["freight"],2)}
 
+def build_quote_comparison(c,rid):
+    q=select(quotes,suppliers.c.name.label("supplier_name"),suppliers.c.verification,suppliers.c.trade_score,matches.c.match_score).join(suppliers,suppliers.c.id==quotes.c.supplier_id).join(matches,and_(matches.c.rfq_id==quotes.c.rfq_id,matches.c.supplier_id==quotes.c.supplier_id)).where(quotes.c.rfq_id==rid); items=[]
+    for r in c.execute(q).all():
+        x=rowdict(r); x["landed_price"]=round(x["unit_price"]*x["quantity"]*(1+x["tax_percent"]/100)+x["freight"],2); items.append(x)
+    if not items:return {"quotes":[],"objective_highlights":{}}
+    return {"quotes":items,"objective_highlights":{"lowest_landed_price_quote_id":min(items,key=lambda x:x["landed_price"])["id"],"fastest_delivery_quote_id":min(items,key=lambda x:x["delivery_days"])["id"],"longest_warranty_quote_id":max(items,key=lambda x:x["warranty_months"])["id"]}}
+
 @app.get("/api/rfqs/{rid}/quotes/compare")
 def compare(rid:str):
     with engine.connect() as c:
-        get_rfq(c,rid); q=select(quotes,suppliers.c.name.label("supplier_name"),suppliers.c.verification,suppliers.c.trade_score).join(suppliers,suppliers.c.id==quotes.c.supplier_id).where(quotes.c.rfq_id==rid); items=[]
-        for r in c.execute(q).all():
-            x=rowdict(r); x["landed_price"]=round(x["unit_price"]*x["quantity"]*(1+x["tax_percent"]/100)+x["freight"],2); items.append(x)
-        if not items:return {"quotes":[],"objective_highlights":{}}
-        return {"quotes":items,"objective_highlights":{"lowest_landed_price_quote_id":min(items,key=lambda x:x["landed_price"])["id"],"fastest_delivery_quote_id":min(items,key=lambda x:x["delivery_days"])["id"],"longest_warranty_quote_id":max(items,key=lambda x:x["warranty_months"])["id"]}}
+        get_rfq(c,rid); return build_quote_comparison(c,rid)
 
 @app.get("/api/admin/sellers")
 def admin_sellers(x_admin_token:str|None=Header(default=None)):
