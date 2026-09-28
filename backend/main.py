@@ -326,6 +326,14 @@ def seller_quotes(authorization:str|None=Header(default=None)):
             x=rowdict(r); x["landed_price"]=round(x["unit_price"]*x["quantity"]*(1+x["tax_percent"]/100)+x["freight"],2); x["status"]="sent"; out.append(x)
         return out
 
+def build_quote_comparison(c,rid):
+    q=select(quotes,suppliers.c.name.label("supplier_name"),suppliers.c.verification,suppliers.c.trade_score,matches.c.match_score).join(suppliers,suppliers.c.id==quotes.c.supplier_id).join(matches,and_(matches.c.rfq_id==quotes.c.rfq_id,matches.c.supplier_id==quotes.c.supplier_id)).where(quotes.c.rfq_id==rid)
+    items=[]
+    for r in c.execute(q).all():
+        x=rowdict(r); x["landed_price"]=round(x["unit_price"]*x["quantity"]*(1+x["tax_percent"]/100)+x["freight"],2); items.append(x)
+    if not items:return {"quotes":[],"objective_highlights":{}}
+    return {"quotes":items,"objective_highlights":{"lowest_landed_price_quote_id":min(items,key=lambda x:x["landed_price"])["id"],"fastest_delivery_quote_id":min(items,key=lambda x:x["delivery_days"])["id"],"longest_warranty_quote_id":max(items,key=lambda x:x["warranty_months"])["id"]}}
+
 @app.get("/api/buyer/rfqs/{rid}/quotes/compare")
 def buyer_compare(rid:str,session_id:str):
     with engine.connect() as c:
