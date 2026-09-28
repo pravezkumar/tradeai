@@ -159,7 +159,7 @@ class RFQIn(BaseModel):
 class QualificationIn(BaseModel):
     category:str|None=None; quantity:str|None=None; location:str|None=None; timeline:str|None=None; specifications:str|None=None; budget:str|None=None
 class OTPIn(BaseModel): session_id:str; phone:str=Field(min_length=8,max_length=20)
-class OTPVerify(BaseModel): session_id:str; code:str=Field(min_length=4,max_length=4,pattern=r"^\\d{4}$")
+class OTPVerify(BaseModel): session_id:str; code:str=Field(min_length=4,max_length=4,pattern=r"^\d{4}$")
 class SellerAccountIn(BaseModel):
     full_name:str=Field(min_length=2,max_length=100); business_name:str=Field(min_length=2,max_length=160); mobile:str=Field(min_length=8,max_length=20); email:str=Field(min_length=5,max_length=160); seller_type:str=Field(min_length=2,max_length=80); category:str=Field(min_length=2,max_length=120); password:str=Field(min_length=8,max_length=200)
 class SellerLoginIn(BaseModel): login:str=Field(min_length=5,max_length=160); password:str=Field(min_length=8,max_length=200)
