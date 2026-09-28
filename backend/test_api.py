@@ -339,3 +339,31 @@ def test_supplier_question_and_call_require_buyer_consent():
         "session_id": other, "action": "decline"
     })
     assert forbidden.status_code == 403
+
+
+def test_otp_is_hashed_at_rest_and_resend_is_rate_limited():
+    from sqlalchemy import select
+    from main import engine, otp_codes
+    s = new_buyer()
+    sent = client.post("/api/otp/send", json={"session_id": s, "phone": "+919999999988"})
+    assert sent.status_code == 200
+    code = sent.json()["dev_otp"]
+    with engine.connect() as db:
+        stored = db.execute(select(otp_codes.c.code).where(otp_codes.c.session_id == s)).scalar_one()
+    assert stored != code
+    assert len(stored) == 64
+    again = client.post("/api/otp/send", json={"session_id": s, "phone": "+919999999988"})
+    assert again.status_code == 429
+    verified = client.post("/api/otp/verify", json={"session_id": s, "code": code})
+    assert verified.status_code == 200
+    with engine.connect() as db:
+        assert db.execute(select(otp_codes.c.code).where(otp_codes.c.session_id == s)).scalar() is None
+
+
+def test_health_exposes_safe_integration_readiness():
+    h = client.get("/api/health")
+    assert h.status_code == 200
+    data = h.json()
+    assert data["production_readiness"]["otp_hashed_at_rest"] is True
+    assert data["production_readiness"]["otp_resend_cooldown_seconds"] >= 0
+    assert "configured" in data["ai"] and "configured" in data["whatsapp"]
