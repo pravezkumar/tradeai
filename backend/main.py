@@ -84,7 +84,9 @@ suppliers=Table("suppliers",md,Column("id",String(40),primary_key=True),Column("
     Column("trade_score",Integer,nullable=False),Column("response_score",Integer,nullable=False),Column("moq",String(160)),Column("capabilities",Text,nullable=False))
 matches=Table("matches",md,Column("id",String(40),primary_key=True),Column("rfq_id",String(40),nullable=False,index=True),
     Column("supplier_id",String(40),nullable=False,index=True),Column("batch",Integer,nullable=False),Column("match_score",Integer,nullable=False),
-    Column("status",String(40),nullable=False),Column("released_at",DateTime(timezone=True),nullable=False),UniqueConstraint("rfq_id","supplier_id",name="uq_match_rfq_supplier"))
+    Column("status",String(40),nullable=False),Column("released_at",DateTime(timezone=True),nullable=False),
+    Column("response_at",DateTime(timezone=True)),Column("decline_reason",String(500)),
+    UniqueConstraint("rfq_id","supplier_id",name="uq_match_rfq_supplier"))
 quotes=Table("quotes",md,Column("id",String(40),primary_key=True),Column("rfq_id",String(40),nullable=False,index=True),
     Column("supplier_id",String(40),nullable=False,index=True),Column("unit_price",Float,nullable=False),Column("quantity",Float,nullable=False,default=1),
     Column("tax_percent",Float,nullable=False,default=0),Column("freight",Float,nullable=False,default=0),Column("delivery_days",Integer,nullable=False),
@@ -131,6 +133,8 @@ def init_db():
     with engine.begin() as c:
         if DATABASE_URL.startswith("postgresql"):
             c.execute(text("ALTER TABLE otp_codes ALTER COLUMN code TYPE VARCHAR(64)"))
+            c.execute(text("ALTER TABLE matches ADD COLUMN IF NOT EXISTS response_at TIMESTAMPTZ"))
+            c.execute(text("ALTER TABLE matches ADD COLUMN IF NOT EXISTS decline_reason VARCHAR(500)"))
         if not c.execute(select(func.count()).select_from(suppliers)).scalar_one():
             seed=[
             dict(id="sup-001",name="Shakti Industrial Supply",categories=json.dumps(["industrial supplies","construction","cement"]),locations=json.dumps(["uttarakhand","delhi","ncr","north india"]),verification="Trade Verified",trade_score=92,response_score=90,moq="Flexible",capabilities=json.dumps(["bulk supply","gst invoice","dispatch tracking"])),
@@ -146,7 +150,7 @@ def init_db():
                 c.execute(insert(system_settings).values(key=key,value=value,updated_at=utcnow()))
 
 init_db()
-app=FastAPI(title="TradeAI API",version="2.0.0")
+app=FastAPI(title="TradeAI API",version="2.1.0")
 app.add_middleware(CORSMiddleware,allow_origins=[x.strip() for x in os.getenv("TRADEAI_CORS_ORIGINS","https://tradeai-pgvr.onrender.com,http://localhost:8000,http://127.0.0.1:8000").split(",") if x.strip()],allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
 
 async def routing_background_loop():
@@ -193,6 +197,8 @@ class BuyerRequestResponseIn(BaseModel):
     session_id:str; action:str=Field(min_length=3,max_length=30); message:str|None=Field(default=None,max_length=1200)
 class BuyerOrderIn(BaseModel): session_id:str; confirm_terms:bool=True
 class OrderStatusIn(BaseModel): status:str=Field(min_length=3,max_length=40)
+class OpportunityActionIn(BaseModel):
+    action:str=Field(min_length=3,max_length=20); reason:str|None=Field(default=None,max_length=500)
 class AIQualificationIn(BaseModel):
     requirement:str=Field(min_length=3,max_length=3000); latest_message:str|None=Field(default=None,max_length=2000)
     answers:dict[str,str|None]={}; conversation:list[dict[str,str]]=[]
@@ -324,7 +330,7 @@ def sync_registered_supplier(c,sid):
     return vals
 
 @app.get("/")
-def root(): return {"service":"TradeAI API","status":"ok","version":"2.0.0"}
+def root(): return {"service":"TradeAI API","status":"ok","version":"2.1.0"}
 @app.get("/api/health")
 def health():
     with engine.connect() as c: c.execute(select(1)).scalar_one()
@@ -724,6 +730,38 @@ def seller_profile(p:SellerProfileIn,authorization:str|None=Header(default=None)
         sync_registered_supplier(c,sid)
         return {"saved":True,"status":"verification_pending","matching_eligible":False}
 
+def refresh_supplier_response_score(c,sid):
+    rows=[rowdict(x) for x in c.execute(select(matches).where(matches.c.supplier_id==sid)).all()]
+    measured=[x for x in rows if x.get("response_at")]
+    if not rows or not measured:return None
+    response_rate=len(measured)/len(rows)
+    mins=[max(0,(as_utc(x["response_at"])-as_utc(x["released_at"])).total_seconds()/60) for x in measured]
+    avg=sum(mins)/len(mins)
+    speed=100 if avg<=10 else 85 if avg<=30 else 70 if avg<=60 else 50 if avg<=240 else 25
+    raw=response_rate*70+(speed/100)*30
+    score=round((70*5+raw*len(rows))/(5+len(rows)))
+    score=max(0,min(100,score))
+    c.execute(update(suppliers).where(suppliers.c.id==sid).values(response_score=score))
+    return {"response_score":score,"response_rate":round(response_rate*100,1),"avg_response_minutes":round(avg,1)}
+
+def maybe_expand_after_declines(c,rid):
+    min_responses=int_setting(c,"min_responses",DEFAULT_MIN_RESPONSES)
+    max_batches=int_setting(c,"max_batches",DEFAULT_MAX_BATCHES)
+    latest=c.execute(select(func.max(matches.c.batch)).where(matches.c.rfq_id==rid)).scalar()
+    if not latest or int(latest)>=max_batches:return None
+    responses=c.execute(select(func.count()).select_from(quotes).where(quotes.c.rfq_id==rid)).scalar_one()
+    open_possible=c.execute(select(func.count()).select_from(matches).where(
+        matches.c.rfq_id==rid,matches.c.status.in_(["released","accepted"]))).scalar_one()
+    if responses+open_possible>=min_responses:return None
+    try:
+        result=release_batch(c,rid,int(latest)+1,"early_decline")
+        if result["matches"]:
+            c.execute(insert(routing_events).values(id="route-"+uuid.uuid4().hex[:14],rfq_id=rid,event="early_expansion",
+                batch=int(latest)+1,details=json.dumps({"responses":responses,"open_possible":open_possible,"min_responses":min_responses}),created_at=utcnow()))
+        return result
+    except HTTPException:
+        return None
+
 def release_batch(c,rid,batch,source="manual"):
     if batch<1: raise HTTPException(400,"Batch must be >= 1")
     r=get_rfq(c,rid)
@@ -788,8 +826,54 @@ def list_matches(rid:str):
 def seller_opportunities(authorization:str|None=Header(default=None)):
     with engine.connect() as c:
         sid=auth_seller(c,authorization)
-        q=select(rfqs.c.id.label("rfq_id"),rfqs.c.requirement,rfqs.c.category,rfqs.c.quantity,rfqs.c.location,rfqs.c.timeline,rfqs.c.budget,rfqs.c.intent_score,rfqs.c.status,matches.c.match_score,matches.c.batch,matches.c.status.label("match_status"),matches.c.released_at).join(matches,matches.c.rfq_id==rfqs.c.id).where(matches.c.supplier_id==sid).order_by(matches.c.released_at.desc())
+        q=select(rfqs.c.id.label("rfq_id"),rfqs.c.requirement,rfqs.c.category,rfqs.c.quantity,rfqs.c.location,rfqs.c.timeline,rfqs.c.budget,rfqs.c.intent_score,rfqs.c.status,matches.c.match_score,matches.c.batch,matches.c.status.label("match_status"),matches.c.released_at,matches.c.response_at,matches.c.decline_reason).join(matches,matches.c.rfq_id==rfqs.c.id).where(matches.c.supplier_id==sid).order_by(matches.c.released_at.desc())
         return [rowdict(x) for x in c.execute(q).all()]
+
+@app.patch("/api/seller/rfqs/{rid}/opportunity")
+def seller_opportunity_action(rid:str,p:OpportunityActionIn,authorization:str|None=Header(default=None)):
+    action=p.action.strip().lower()
+    if action not in ("accept","decline"):raise HTTPException(400,"Action must be accept or decline")
+    with engine.begin() as c:
+        sid=auth_seller(c,authorization); get_rfq(c,rid)
+        m=rowdict(c.execute(select(matches).where(matches.c.rfq_id==rid,matches.c.supplier_id==sid)).first())
+        if not m:raise HTTPException(403,"This RFQ has not been released to your supplier account")
+        if m["status"] in ("quoted","won"):raise HTTPException(409,"This opportunity already progressed beyond response stage")
+        if action=="accept":
+            c.execute(update(matches).where(matches.c.id==m["id"]).values(status="accepted",response_at=m.get("response_at") or utcnow(),decline_reason=None))
+            expanded=None
+        else:
+            c.execute(update(matches).where(matches.c.id==m["id"]).values(status="declined",response_at=m.get("response_at") or utcnow(),decline_reason=(p.reason or "").strip() or None))
+            expanded=maybe_expand_after_declines(c,rid)
+        perf=refresh_supplier_response_score(c,sid)
+        return {"rfq_id":rid,"action":action,"match_status":"accepted" if action=="accept" else "declined",
+            "routing_expanded":bool(expanded and expanded.get("matches")),"response_performance":perf}
+
+@app.get("/api/seller/analytics")
+def seller_analytics(authorization:str|None=Header(default=None)):
+    with engine.connect() as c:
+        sid=auth_seller(c,authorization)
+        ms=[rowdict(x) for x in c.execute(select(matches).where(matches.c.supplier_id==sid)).all()]
+        qs=[rowdict(x) for x in c.execute(select(quotes).where(quotes.c.supplier_id==sid)).all()]
+        ds=[rowdict(x) for x in c.execute(select(deal_rooms).where(deal_rooms.c.supplier_id==sid)).all()]
+        os_=[rowdict(x) for x in c.execute(select(orders).where(orders.c.supplier_id==sid)).all()]
+        supplier=rowdict(c.execute(select(suppliers).where(suppliers.c.id==sid)).first()) or {}
+        responded=[x for x in ms if x.get("response_at")]
+        mins=[max(0,(as_utc(x["response_at"])-as_utc(x["released_at"])).total_seconds()/60) for x in responded]
+        quoted_rfqs={x["rfq_id"] for x in qs}; won=[x for x in os_ if x["status"]!="cancelled"]; completed=[x for x in os_ if x["status"]=="completed"]
+        order_value=round(sum(float(x["amount"] or 0) for x in won),2)
+        completed_value=round(sum(float(x["amount"] or 0) for x in completed),2)
+        monthly={}
+        for x in won:
+            dt=as_utc(x["created_at"]); key=dt.strftime("%Y-%m"); monthly[key]=round(monthly.get(key,0)+float(x["amount"] or 0),2)
+        total=len(ms); quoted_count=len(quoted_rfqs)
+        return {"opportunities":total,"accepted":sum(1 for x in ms if x["status"]=="accepted"),"declined":sum(1 for x in ms if x["status"]=="declined"),
+            "quoted":quoted_count,"negotiations":len(ds),"orders_won":len(won),"orders_completed":len(completed),
+            "verified_order_value":order_value,"completed_order_value":completed_value,
+            "quote_rate":round(quoted_count/total*100,1) if total else 0,"win_rate":round(len(won)/total*100,1) if total else 0,
+            "response_rate":round(len(responded)/total*100,1) if total else 0,
+            "avg_response_minutes":round(sum(mins)/len(mins),1) if mins else None,"response_score":supplier.get("response_score"),
+            "monthly_order_value":[{"month":k,"value":monthly[k]} for k in sorted(monthly)[-6:]],
+            "platform_spend":None,"roi":None,"roi_status":"billing_not_connected"}
 
 @app.get("/api/sellers/{sid}/opportunities")
 def opportunities(sid:str):
@@ -868,7 +952,9 @@ def seller_quote(rid:str,p:SellerQuoteIn,authorization:str|None=Header(default=N
             c.execute(update(quotes).where(quotes.c.id==existing).values(**x,created_at=utcnow())); qid=existing; created=False
         else:
             qid="quo-"+uuid.uuid4().hex[:14]; c.execute(insert(quotes).values(id=qid,rfq_id=rid,supplier_id=sid,created_at=utcnow(),**x)); created=True
-        c.execute(update(matches).where(matches.c.rfq_id==rid,matches.c.supplier_id==sid).values(status="quoted"))
+        m=rowdict(c.execute(select(matches).where(matches.c.rfq_id==rid,matches.c.supplier_id==sid)).first())
+        c.execute(update(matches).where(matches.c.rfq_id==rid,matches.c.supplier_id==sid).values(status="quoted",response_at=(m.get("response_at") if m else None) or utcnow(),decline_reason=None))
+        refresh_supplier_response_score(c,sid)
         landed=round(x["unit_price"]*x["quantity"]*(1+x["tax_percent"]/100)+x["freight"],2)
         return {"quote_id":qid,"rfq_id":rid,"supplier_id":sid,"landed_price":landed,"created":created,"status":"sent"}
 
