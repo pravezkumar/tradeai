@@ -83,6 +83,11 @@ deal_rooms=Table("deal_rooms",md,Column("id",String(40),primary_key=True),Column
     Column("created_at",DateTime(timezone=True),nullable=False),Column("updated_at",DateTime(timezone=True),nullable=False),UniqueConstraint("quote_id","buyer_session_id",name="uq_deal_quote_buyer"))
 deal_messages=Table("deal_messages",md,Column("id",String(40),primary_key=True),Column("deal_id",String(40),nullable=False,index=True),
     Column("sender_role",String(20),nullable=False),Column("sender_id",String(40),nullable=False),Column("message",Text,nullable=False),Column("created_at",DateTime(timezone=True),nullable=False))
+supplier_requests=Table("supplier_requests",md,Column("id",String(40),primary_key=True),Column("rfq_id",String(40),nullable=False,index=True),
+    Column("supplier_id",String(40),nullable=False,index=True),Column("buyer_session_id",String(40),nullable=False,index=True),
+    Column("kind",String(30),nullable=False,index=True),Column("message",Text),Column("status",String(30),nullable=False,default="pending"),
+    Column("buyer_reply",Text),Column("contact_consent",Boolean,nullable=False,default=False),
+    Column("created_at",DateTime(timezone=True),nullable=False),Column("updated_at",DateTime(timezone=True),nullable=False))
 orders=Table("orders",md,Column("id",String(40),primary_key=True),Column("deal_id",String(40),nullable=False,unique=True,index=True),
     Column("rfq_id",String(40),nullable=False,index=True),Column("quote_id",String(40),nullable=False),Column("supplier_id",String(40),nullable=False,index=True),
     Column("buyer_session_id",String(40),nullable=False,index=True),Column("amount",Float,nullable=False),Column("status",String(40),nullable=False),
@@ -126,7 +131,7 @@ def init_db():
                 c.execute(insert(system_settings).values(key=key,value=value,updated_at=utcnow()))
 
 init_db()
-app=FastAPI(title="TradeAI API",version="1.6.0")
+app=FastAPI(title="TradeAI API",version="1.7.0")
 app.add_middleware(CORSMiddleware,allow_origins=[x.strip() for x in os.getenv("TRADEAI_CORS_ORIGINS","https://tradeai-pgvr.onrender.com,http://localhost:8000,http://127.0.0.1:8000").split(",") if x.strip()],allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
 
 async def routing_background_loop():
@@ -164,6 +169,10 @@ class BuyerDealStartIn(BaseModel): session_id:str; quote_id:str; message:str|Non
 class BuyerDealMessageIn(BaseModel): session_id:str; message:str=Field(min_length=1,max_length=2000)
 class SellerDealMessageIn(BaseModel): message:str=Field(min_length=1,max_length=2000)
 class ContactConsentIn(BaseModel): session_id:str; approved:bool
+class SupplierRequestIn(BaseModel):
+    kind:str=Field(min_length=3,max_length=30); message:str|None=Field(default=None,max_length=1200)
+class BuyerRequestResponseIn(BaseModel):
+    session_id:str; action:str=Field(min_length=3,max_length=30); message:str|None=Field(default=None,max_length=1200)
 class BuyerOrderIn(BaseModel): session_id:str; confirm_terms:bool=True
 class OrderStatusIn(BaseModel): status:str=Field(min_length=3,max_length=40)
 class AIQualificationIn(BaseModel):
@@ -297,7 +306,7 @@ def sync_registered_supplier(c,sid):
     return vals
 
 @app.get("/")
-def root(): return {"service":"TradeAI API","status":"ok","version":"1.6.0"}
+def root(): return {"service":"TradeAI API","status":"ok","version":"1.7.0"}
 @app.get("/api/health")
 def health():
     with engine.connect() as c: c.execute(select(1)).scalar_one()
@@ -624,6 +633,66 @@ def opportunities(sid:str):
         q=select(rfqs.c.id.label("rfq_id"),rfqs.c.requirement,rfqs.c.category,rfqs.c.quantity,rfqs.c.location,rfqs.c.timeline,rfqs.c.intent_score,rfqs.c.status,matches.c.match_score,matches.c.batch,matches.c.status.label("match_status")).join(matches,matches.c.rfq_id==rfqs.c.id).where(matches.c.supplier_id==sid).order_by(matches.c.released_at.desc())
         return [rowdict(x) for x in c.execute(q).all()]
 
+@app.post("/api/seller/rfqs/{rid}/requests",status_code=201)
+def create_supplier_request(rid:str,p:SupplierRequestIn,authorization:str|None=Header(default=None)):
+    kind=p.kind.strip().lower()
+    if kind not in ("ask_question","request_call"): raise HTTPException(400,"Request kind must be ask_question or request_call")
+    if kind=="ask_question" and not (p.message and p.message.strip()): raise HTTPException(400,"A question is required")
+    with engine.begin() as c:
+        sid=auth_seller(c,authorization); r=get_rfq(c,rid)
+        if not c.execute(select(matches.c.id).where(matches.c.rfq_id==rid,matches.c.supplier_id==sid)).first(): raise HTTPException(403,"This RFQ has not been released to your supplier account")
+        if kind=="request_call":
+            existing=rowdict(c.execute(select(supplier_requests).where(supplier_requests.c.rfq_id==rid,supplier_requests.c.supplier_id==sid,supplier_requests.c.kind=="request_call",supplier_requests.c.status.in_(["pending","approved"])).order_by(supplier_requests.c.created_at.desc())).first())
+            if existing:return existing
+        now=utcnow(); qid="req-"+uuid.uuid4().hex[:14]
+        c.execute(insert(supplier_requests).values(id=qid,rfq_id=rid,supplier_id=sid,buyer_session_id=r["session_id"],kind=kind,
+            message=(p.message or "").strip() or None,status="pending",buyer_reply=None,contact_consent=False,created_at=now,updated_at=now))
+        current=c.execute(select(matches.c.status).where(matches.c.rfq_id==rid,matches.c.supplier_id==sid)).scalar()
+        if current=="released":c.execute(update(matches).where(matches.c.rfq_id==rid,matches.c.supplier_id==sid).values(status="engaged"))
+        return rowdict(c.execute(select(supplier_requests).where(supplier_requests.c.id==qid)).first())
+
+@app.get("/api/seller/requests")
+def list_seller_requests(authorization:str|None=Header(default=None)):
+    with engine.connect() as c:
+        sid=auth_seller(c,authorization)
+        q=select(supplier_requests,rfqs.c.requirement,rfqs.c.location).join(rfqs,rfqs.c.id==supplier_requests.c.rfq_id).where(supplier_requests.c.supplier_id==sid).order_by(supplier_requests.c.updated_at.desc())
+        out=[]
+        for row in c.execute(q).all():
+            x=rowdict(row); x["buyer_contact"]=None
+            if x["kind"]=="request_call" and x["status"]=="approved" and x["contact_consent"]:
+                x["buyer_contact"]=c.execute(select(buyer_sessions.c.phone).where(buyer_sessions.c.id==x["buyer_session_id"])).scalar()
+            x.pop("buyer_session_id",None); out.append(x)
+        return out
+
+@app.get("/api/buyer/requests")
+def list_buyer_requests(session_id:str):
+    with engine.connect() as c:
+        if not c.execute(select(buyer_sessions.c.id).where(buyer_sessions.c.id==session_id)).first(): raise HTTPException(404,"Buyer session not found")
+        q=select(supplier_requests,suppliers.c.name.label("supplier_name"),suppliers.c.verification.label("supplier_verification")).join(suppliers,suppliers.c.id==supplier_requests.c.supplier_id).where(supplier_requests.c.buyer_session_id==session_id).order_by(supplier_requests.c.updated_at.desc())
+        out=[]
+        for row in c.execute(q).all():
+            x=rowdict(row); x.pop("buyer_session_id",None); out.append(x)
+        return out
+
+@app.put("/api/buyer/requests/{qid}")
+def respond_supplier_request(qid:str,p:BuyerRequestResponseIn):
+    action=p.action.strip().lower()
+    if action not in ("reply","approve","decline"): raise HTTPException(400,"Action must be reply, approve, or decline")
+    with engine.begin() as c:
+        req=rowdict(c.execute(select(supplier_requests).where(supplier_requests.c.id==qid)).first())
+        if not req: raise HTTPException(404,"Supplier request not found")
+        if req["buyer_session_id"]!=p.session_id: raise HTTPException(403,"Request does not belong to this buyer session")
+        if req["kind"]=="ask_question":
+            if action!="reply": raise HTTPException(400,"Questions require a reply")
+            if not (p.message and p.message.strip()): raise HTTPException(400,"Reply message is required")
+            status="answered"; consent=False; reply=p.message.strip()
+        else:
+            if action not in ("approve","decline"): raise HTTPException(400,"Call requests must be approved or declined")
+            status="approved" if action=="approve" else "declined"; consent=action=="approve"; reply=(p.message or "").strip() or None
+        c.execute(update(supplier_requests).where(supplier_requests.c.id==qid).values(status=status,buyer_reply=reply,contact_consent=consent,updated_at=utcnow()))
+        return {"request_id":qid,"status":status,"contact_shared":consent,"buyer_reply":reply}
+
+
 @app.post("/api/seller/rfqs/{rid}/quotes",status_code=201)
 def seller_quote(rid:str,p:SellerQuoteIn,authorization:str|None=Header(default=None)):
     with engine.begin() as c:
@@ -896,6 +965,8 @@ def admin(x_admin_token:str|None=Header(default=None)):
             "deal_rooms":c.execute(select(func.count()).select_from(deal_rooms)).scalar_one(),
             "orders":c.execute(select(func.count()).select_from(orders)).scalar_one(),
             "notifications":c.execute(select(func.count()).select_from(notifications)).scalar_one(),
+            "supplier_requests":c.execute(select(func.count()).select_from(supplier_requests)).scalar_one(),
+            "approved_call_requests":c.execute(select(func.count()).select_from(supplier_requests).where(supplier_requests.c.kind=="request_call",supplier_requests.c.status=="approved")).scalar_one(),
             "controls":{"qualification_threshold":threshold,"first_batch":int_setting(c,"first_batch",3),"next_batch":int_setting(c,"next_batch",2),
                 "auto_expand_minutes":int_setting(c,"auto_expand_minutes",DEFAULT_AUTO_EXPAND_MINUTES),"min_responses":int_setting(c,"min_responses",DEFAULT_MIN_RESPONSES),
                 "max_batches":int_setting(c,"max_batches",DEFAULT_MAX_BATCHES),"duplicate_screening":bool_setting(c,"duplicate_screening",True),
