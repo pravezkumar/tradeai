@@ -121,7 +121,7 @@ def rescore(c,rid):
     x=get_rfq(c,rid)
     verified=bool(c.execute(select(buyer_sessions.c.verified).where(buyer_sessions.c.id==x["session_id"])).scalar_one())
     score,reasons,risks=calc_score(x,verified)
-    status="hot" if score>=80 else "qualified" if score>=THRESHOLD else "needs_more_information" if score>=40 else "research"
+    status=("hot" if score>=80 else "qualified") if verified and score>=THRESHOLD else "verification_required" if score>=THRESHOLD else "needs_more_information" if score>=40 else "research"
     c.execute(update(rfqs).where(rfqs.c.id==rid).values(intent_score=score,score_reasons=json.dumps(reasons),risk_flags=json.dumps(risks),status=status,updated_at=utcnow()))
     x.update(intent_score=score,score_reasons=reasons,risk_flags=risks,status=status)
     return x
@@ -247,6 +247,8 @@ def release(rid:str,batch:int=1):
     if batch<1: raise HTTPException(400,"Batch must be >= 1")
     with engine.begin() as c:
         r=get_rfq(c,rid)
+        verified=bool(c.execute(select(buyer_sessions.c.verified).where(buyer_sessions.c.id==r["session_id"])).scalar_one())
+        if not verified: raise HTTPException(409,"Buyer OTP verification required before supplier release")
         if r["intent_score"]<THRESHOLD: raise HTTPException(409,f"RFQ intent score must be at least {THRESHOLD}")
         used=set(c.execute(select(matches.c.supplier_id).where(matches.c.rfq_id==rid)).scalars().all())
         allsup=[rowdict(x) for x in c.execute(select(suppliers)).all() if rowdict(x)["id"] not in used]
