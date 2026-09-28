@@ -2,6 +2,7 @@ TRADEAI — AI-QUALIFIED B2B TRADE NETWORK
 
 CURRENT STATUS
 - Complete interactive frontend is deployed on Render.
+- Seller/Supplier Portal now includes Create Account → Login → 5-step onboarding → Dashboard.
 - Frontend is a self-contained index.html with embedded CSS + JavaScript.
 - Phase-1 FastAPI backend foundation is now in /backend.
 - Backend is not connected to the public frontend yet.
@@ -14,6 +15,7 @@ PHASE-1 BACKEND INCLUDED
 - Research / Needs More Information / Qualified / Hot states.
 - OTP-ready verification flow; development OTP 123456.
 - Controlled supplier matching: first 3 suppliers, then 2 per later batch.
+- Seller account creation and login API foundation (PBKDF2 password hashing; no plaintext passwords).
 - Seller opportunity feed.
 - Structured quotations and landed-price calculation.
 - Objective quote comparison.
