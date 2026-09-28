@@ -1,5 +1,5 @@
 from __future__ import annotations
-import json, os, secrets, sqlite3, uuid
+import hashlib, hmac, json, os, secrets, sqlite3, uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -22,6 +22,8 @@ def init_db():
     with db() as c:
         c.executescript("""
         CREATE TABLE IF NOT EXISTS buyer_sessions(id TEXT PRIMARY KEY,created_at TEXT NOT NULL,verified INTEGER NOT NULL DEFAULT 0,phone TEXT,company TEXT);
+        CREATE TABLE IF NOT EXISTS seller_accounts(id TEXT PRIMARY KEY,full_name TEXT NOT NULL,business_name TEXT NOT NULL,mobile TEXT NOT NULL UNIQUE,email TEXT NOT NULL UNIQUE,seller_type TEXT NOT NULL,category TEXT NOT NULL,password_salt TEXT NOT NULL,password_hash TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'profile_pending',created_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS seller_sessions(token TEXT PRIMARY KEY,seller_id TEXT NOT NULL,created_at TEXT NOT NULL,expires_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS rfqs(id TEXT PRIMARY KEY,session_id TEXT NOT NULL,requirement TEXT NOT NULL,category TEXT,quantity TEXT,location TEXT,timeline TEXT,specifications TEXT,budget TEXT,status TEXT NOT NULL,intent_score INTEGER NOT NULL DEFAULT 0,score_reasons TEXT NOT NULL DEFAULT '[]',risk_flags TEXT NOT NULL DEFAULT '[]',created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS otp_codes(session_id TEXT PRIMARY KEY,code TEXT NOT NULL,expires_at TEXT NOT NULL,attempts INTEGER NOT NULL DEFAULT 0);
         CREATE TABLE IF NOT EXISTS suppliers(id TEXT PRIMARY KEY,name TEXT NOT NULL,categories TEXT NOT NULL,locations TEXT NOT NULL,verification TEXT NOT NULL,trade_score INTEGER NOT NULL,response_score INTEGER NOT NULL,moq TEXT,capabilities TEXT NOT NULL);
@@ -51,6 +53,10 @@ class QualificationIn(BaseModel):
     category:str|None=None; quantity:str|None=None; location:str|None=None; timeline:str|None=None; specifications:str|None=None; budget:str|None=None
 class OTPIn(BaseModel): session_id:str; phone:str=Field(min_length=8,max_length=20)
 class OTPVerify(BaseModel): session_id:str; code:str=Field(min_length=4,max_length=8)
+class SellerAccountIn(BaseModel):
+    full_name:str=Field(min_length=2,max_length=100); business_name:str=Field(min_length=2,max_length=160); mobile:str=Field(min_length=8,max_length=20); email:str=Field(min_length=5,max_length=160); seller_type:str=Field(min_length=2,max_length=80); category:str=Field(min_length=2,max_length=100); password:str=Field(min_length=8,max_length=200)
+class SellerLoginIn(BaseModel):
+    login:str=Field(min_length=5,max_length=160); password:str=Field(min_length=8,max_length=200)
 class QuoteIn(BaseModel):
     supplier_id:str; unit_price:float=Field(gt=0); quantity:float=Field(default=1,gt=0); tax_percent:float=Field(default=0,ge=0,le=100); freight:float=Field(default=0,ge=0); delivery_days:int=Field(gt=0); warranty_months:int=Field(default=0,ge=0); payment_terms:str|None=None; validity_days:int=Field(default=7,gt=0); notes:str|None=None
 
@@ -76,6 +82,18 @@ def rescore(c,rid):
     status="hot" if score>=80 else "qualified" if score>=THRESHOLD else "needs_more_information" if score>=40 else "research"
     c.execute("UPDATE rfqs SET intent_score=?,score_reasons=?,risk_flags=?,status=?,updated_at=? WHERE id=?",(score,json.dumps(reasons),json.dumps(risks),status,now(),rid)); c.commit()
     x.update(intent_score=score,score_reasons=reasons,risk_flags=risks,status=status); return x
+
+def password_hash(password:str,salt_hex:str|None=None):
+    salt=bytes.fromhex(salt_hex) if salt_hex else secrets.token_bytes(16)
+    digest=hashlib.pbkdf2_hmac("sha256",password.encode(),salt,210000)
+    return salt.hex(),digest.hex()
+
+def password_ok(password:str,salt_hex:str,expected:str):
+    _,actual=password_hash(password,salt_hex)
+    return hmac.compare_digest(actual,expected)
+
+def seller_public(x):
+    return {"id":x["id"],"full_name":x["full_name"],"business_name":x["business_name"],"mobile":x["mobile"],"email":x["email"],"seller_type":x["seller_type"],"category":x["category"],"status":x["status"],"created_at":x["created_at"]}
 
 def supplier_score(r,s):
     cat=(r["category"] or r["requirement"]).lower(); loc=(r["location"] or "").lower(); cats=json.loads(s["categories"]); locs=" ".join(json.loads(s["locations"])).lower(); n=0
@@ -155,6 +173,31 @@ def release(rid:str,batch:int=1):
 def matches(rid:str):
     with db() as c:
         rfq(c,rid); return [dict(x) for x in c.execute("SELECT m.*,s.name supplier_name,s.verification,s.trade_score FROM matches m JOIN suppliers s ON s.id=m.supplier_id WHERE m.rfq_id=? ORDER BY m.batch,m.match_score DESC",(rid,))]
+
+@app.post("/api/seller/accounts",status_code=201)
+def seller_account(p:SellerAccountIn):
+    sid="sel-"+uuid.uuid4().hex[:16]; salt,digest=password_hash(p.password)
+    with db() as c:
+        if c.execute("SELECT 1 FROM seller_accounts WHERE lower(email)=lower(?) OR mobile=?",(p.email.strip(),p.mobile.strip())).fetchone(): raise HTTPException(409,"Seller account already exists")
+        c.execute("INSERT INTO seller_accounts VALUES (?,?,?,?,?,?,?,?,?,?,?)",(sid,p.full_name.strip(),p.business_name.strip(),p.mobile.strip(),p.email.strip().lower(),p.seller_type,p.category,salt,digest,"profile_pending",now()))
+        x=c.execute("SELECT * FROM seller_accounts WHERE id=?",(sid,)).fetchone()
+        return {"seller":seller_public(x),"next_step":"business_profile"}
+
+@app.post("/api/seller/login")
+def seller_login(p:SellerLoginIn):
+    with db() as c:
+        x=c.execute("SELECT * FROM seller_accounts WHERE lower(email)=lower(?) OR mobile=?",(p.login.strip(),p.login.strip())).fetchone()
+        if not x or not password_ok(p.password,x["password_salt"],x["password_hash"]): raise HTTPException(401,"Invalid login")
+        token=secrets.token_urlsafe(32); exp=datetime.now(timezone.utc)+timedelta(days=7)
+        c.execute("INSERT INTO seller_sessions VALUES (?,?,?,?)",(token,x["id"],now(),exp.isoformat()))
+        return {"access_token":token,"token_type":"bearer","expires_at":exp.isoformat(),"seller":seller_public(x)}
+
+@app.get("/api/seller/session/{token}")
+def seller_session(token:str):
+    with db() as c:
+        x=c.execute("SELECT a.* ,s.expires_at FROM seller_sessions s JOIN seller_accounts a ON a.id=s.seller_id WHERE s.token=?",(token,)).fetchone()
+        if not x or datetime.fromisoformat(x["expires_at"])<datetime.now(timezone.utc): raise HTTPException(401,"Seller session expired or invalid")
+        return {"seller":seller_public(x)}
 
 @app.get("/api/sellers/{sid}/opportunities")
 def opportunities(sid:str):
