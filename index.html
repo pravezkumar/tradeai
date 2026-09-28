@@ -276,17 +276,17 @@ body{overflow-x:hidden}.site-header{box-shadow:0 1px 0 rgba(7,24,39,.04)}
     <!-- SELLER ONBOARDING -->
     <section class="view" data-view="seller-onboarding">
       <div class="container page-pad narrow"><button class="back-link" data-go="seller">← Back to seller</button>
-        <div class="section-heading"><span>SUPPLIER ONBOARDING</span><h1>Build a supplier profile buyers can trust.</h1><p>Five-step interactive frontend demo. No information is submitted yet.</p></div>
+        <div class="section-heading"><span>SUPPLIER ONBOARDING</span><h1>Build a supplier profile buyers can trust.</h1><p>Five steps complete your persistent supplier profile for matching and verification.</p></div>
         <div class="onboarding-complete panel" id="sellerWizard">
-          <div class="wizard-head"><div class="panel-title"><div><h3 style="margin:0">Supplier setup</h3><p id="wizardStatus">Step 1 of 5 · Business identity</p></div><span class="complete-badge">Frontend demo</span></div><div class="wizard-progress" id="wizardProgress"><i class="wizard-step active"></i><i class="wizard-step"></i><i class="wizard-step"></i><i class="wizard-step"></i><i class="wizard-step"></i></div><div class="wizard-labels"><span class="active">Business</span><span>Capabilities</span><span>Locations</span><span>Verification</span><span>Review</span></div></div>
+          <div class="wizard-head"><div class="panel-title"><div><h3 style="margin:0">Supplier setup</h3><p id="wizardStatus">Step 1 of 5 · Business identity</p></div><span class="complete-badge">Account setup</span></div><div class="wizard-progress" id="wizardProgress"><i class="wizard-step active"></i><i class="wizard-step"></i><i class="wizard-step"></i><i class="wizard-step"></i><i class="wizard-step"></i></div><div class="wizard-labels"><span class="active">Business</span><span>Capabilities</span><span>Locations</span><span>Verification</span><span>Review</span></div></div>
           <div class="wizard-body">
-            <div class="wizard-pane active" data-wizard-pane="0"><h3>Business identity</h3><p>Basic information that will appear on the public supplier profile.</p><div class="form-grid"><label>Business name<input value="Apex Industrial Floors Pvt. Ltd."></label><label>Business type<select><option>Service Provider</option><option>Manufacturer</option><option>Distributor</option><option>Exporter</option></select></label><label>GSTIN<input value="05AAECA1234A1Z5"></label><label>Udyam number<input value="UDYAM-UK-05-0012345"></label><label>Year established<input value="2018"></label><label>Team size<select><option>11–50</option><option>1–10</option><option>51–200</option></select></label><label class="wide">Business description<textarea style="min-height:90px">Industrial epoxy, PU and ESD flooring contractor serving factories, warehouses, pharma and food facilities.</textarea></label></div></div>
+            <div class="wizard-pane active" data-wizard-pane="0"><h3>Business identity</h3><p>Basic information that will appear on the public supplier profile.</p><div class="form-grid"><label>Business name<input value="Apex Industrial Floors Pvt. Ltd."></label><label>Business type<select><option>Service Provider</option><option>Manufacturer</option><option>Distributor</option><option>Exporter</option></select></label><label>GSTIN<input id="profileGstin" value="05AAECA1234A1Z5"></label><label>Udyam number<input id="profileUdyam" value="UDYAM-UK-05-0012345"></label><label>Year established<input id="profileYear" value="2018"></label><label>Team size<select id="profileTeam"><option>11–50</option><option>1–10</option><option>51–200</option></select></label><label class="wide">Business description<textarea id="profileDescription" style="min-height:90px">Industrial epoxy, PU and ESD flooring contractor serving factories, warehouses, pharma and food facilities.</textarea></label></div></div>
             <div class="wizard-pane" data-wizard-pane="1"><h3>Capabilities & capacity</h3><p>Matching will use these capabilities instead of broad keyword listings.</p><b style="font-size:10px">Select primary capabilities</b><div class="chip-select"><button class="selected">Epoxy Flooring</button><button class="selected">PU Flooring</button><button class="selected">ESD Flooring</button><button class="selected">Floor Repair</button><button>Waterproofing</button><button>Protective Coatings</button></div><div class="capacity-grid"><div class="capacity-box"><span>MINIMUM PROJECT</span><b>1,000 sq ft</b></div><div class="capacity-box"><span>MONTHLY CAPACITY</span><b>75,000 sq ft</b></div><div class="capacity-box"><span>TYPICAL LEAD TIME</span><b>3–7 days</b></div></div><div class="form-grid" style="margin-top:16px"><label>Industries served<input value="Automotive, Pharma, Food, Warehousing"></label><label>Warranty range<input value="1–5 years"></label><label class="wide">Important matching notes<input value="Prefer industrial projects above 5,000 sq ft"></label></div></div>
-            <div class="wizard-pane" data-wizard-pane="2"><h3>Service geography</h3><p>Define where you can realistically fulfil orders or projects.</p><div class="form-grid"><label>Primary base<input value="Haridwar, Uttarakhand"></label><label>Service radius<select><option>250 km</option><option>100 km</option><option>Pan India</option></select></label><label class="wide">Priority markets<input value="Haridwar, Roorkee, Dehradun, Rudrapur, Pantnagar, Delhi NCR"></label><label>Site visit available?<select><option>Yes</option><option>No</option></select></label><label>Outstation projects?<select><option>Yes, above ₹2 lakh</option><option>No</option></select></label></div><div class="review-profile" style="margin-top:18px"><small class="kicker" style="color:#7ce2c0">MATCHING PREVIEW</small><h3>Coverage configured</h3><p>Qualified RFQs inside your declared capability + geography can be ranked for your opportunity feed.</p><div class="review-cols"><div><small>PRIMARY CLUSTER</small><b>Uttarakhand industrial belt</b></div><div><small>EXTENDED MARKET</small><b>Delhi NCR & Western UP</b></div></div></div></div>
+            <div class="wizard-pane" data-wizard-pane="2"><h3>Service geography</h3><p>Define where you can realistically fulfil orders or projects.</p><div class="form-grid"><label>Primary base<input value="Haridwar, Uttarakhand"></label><label>Service radius<select><option>250 km</option><option>100 km</option><option>Pan India</option></select></label><label class="wide">Priority markets<input id="profileLocations" value="Haridwar, Roorkee, Dehradun, Rudrapur, Pantnagar, Delhi NCR"></label><label>Site visit available?<select><option>Yes</option><option>No</option></select></label><label>Outstation projects?<select><option>Yes, above ₹2 lakh</option><option>No</option></select></label></div><div class="review-profile" style="margin-top:18px"><small class="kicker" style="color:#7ce2c0">MATCHING PREVIEW</small><h3>Coverage configured</h3><p>Qualified RFQs inside your declared capability + geography can be ranked for your opportunity feed.</p><div class="review-cols"><div><small>PRIMARY CLUSTER</small><b>Uttarakhand industrial belt</b></div><div><small>EXTENDED MARKET</small><b>Delhi NCR & Western UP</b></div></div></div></div>
             <div class="wizard-pane" data-wizard-pane="3"><h3>Business verification</h3><p>Production will verify documents through secure provider integrations. These are demo states.</p><div class="doc-upload"><div><b>GST registration</b><small>Legal business identity & GST status</small></div><span class="doc-state">✓ DEMO VERIFIED</span></div><div class="doc-upload"><div><b>Udyam / company registration</b><small>MSME or corporate registration</small></div><span class="doc-state">✓ DEMO VERIFIED</span></div><div class="doc-upload"><div><b>Authorized representative</b><small>Mobile / email / identity verification</small></div><span class="doc-state">✓ DEMO VERIFIED</span></div><div class="doc-upload"><div><b>ISO / category certificates</b><small>Optional capability evidence</small></div><button class="btn btn-outline small" onclick="showToast('Document upload simulated')">Add document</button></div><div class="verification-preview"><div><span>✓</span><b>Identity Verified</b><small>Authorized user</small></div><div><span>✓</span><b>Business Verified</b><small>GST / Udyam</small></div><div><span>○</span><b>Trade Verified</b><small>Earned from completed trades</small></div></div></div>
             <div class="wizard-pane" data-wizard-pane="4"><h3>Review supplier profile</h3><p>This is how the matching engine and buyers will understand your business.</p><div class="review-profile"><small class="kicker" style="color:#7ce2c0">APEX INDUSTRIAL FLOORS PVT. LTD.</small><h3>Industrial flooring specialist</h3><p>Business Verified · Haridwar · 250 km service radius</p><div class="review-cols"><div><small>CAPABILITIES</small><b>Epoxy · PU · ESD · Repair</b></div><div><small>CAPACITY</small><b>75,000 sq ft / month</b></div><div><small>INDUSTRIES</small><b>Auto · Pharma · Food · Warehouse</b></div><div><small>MIN PROJECT</small><b>1,000 sq ft</b></div></div></div><div class="neutral-note" style="margin-top:14px">Trade Verified status is not self-declared. It will be earned from verified transactions and fulfilment history after backend launch.</div></div>
           </div>
-          <div class="wizard-actions"><button class="btn btn-outline" id="wizardBack" disabled>← Back</button><small id="wizardHint">Nothing is saved in this frontend demo.</small><button class="btn btn-primary" id="wizardNext">Continue →</button></div>
+          <div class="wizard-actions"><button class="btn btn-outline" id="wizardBack" disabled>← Back</button><small id="wizardHint">Profile will be saved to your seller account.</small><button class="btn btn-primary" id="wizardNext">Continue →</button></div>
         </div>
       </div>
     </section>
@@ -339,7 +339,16 @@ body{overflow-x:hidden}.site-header{box-shadow:0 1px 0 rgba(7,24,39,.04)}
   <script>
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
-const state = {step:0, answers:{product:'',quantity:'',location:'',timeline:'',spec:''}, verified:false, score:0};
+const API_BASE = localStorage.getItem('tradeai_api_base') || 'https://tradeai-api-pgvr.onrender.com';
+async function api(path,options={}){
+  const headers={'Content-Type':'application/json',...(options.headers||{})};
+  const token=localStorage.getItem('tradeai_seller_token'); if(token) headers.Authorization='Bearer '+token;
+  const r=await fetch(API_BASE+path,{...options,headers});
+  let body={}; try{body=await r.json()}catch(e){}
+  if(!r.ok) throw new Error(body.detail||('Request failed ('+r.status+')'));
+  return body;
+}
+const state = {step:0, requirement:'', answers:{product:'',quantity:'',location:'',timeline:'',spec:''}, verified:false, score:0, buyerSession:null, rfqId:null, apiMatches:[]};
 
 const suppliers=[
  {name:'Apex Industrial Floors',initials:'AF',location:'Haridwar · 18 km',match:96,trade:94,response:'12 min',orders:46,badges:['Business Verified','Trade Verified','Site Visit']},
@@ -388,12 +397,42 @@ function addBubble(text,type='ai'){const d=document.createElement('div');d.class
 function setQuick(opts){const old=$('.quick-options');if(old)old.remove();if(!opts?.length)return;const q=document.createElement('div');q.className='quick-options';opts.forEach(x=>{const b=document.createElement('button');b.textContent=x;b.onclick=()=>{$('#chatInput').value=x;sendChat()};q.appendChild(b)});$('#chatBody').appendChild(q)}
 function calcScore(){let s=0;if(state.answers.product)s+=15;if(state.answers.quantity)s+=15;if(state.answers.location)s+=15;if(state.answers.timeline)s+=15;if(state.answers.spec)s+=10;if(state.verified)s+=20;if(Object.values(state.answers).filter(Boolean).length>=4)s+=10;return Math.min(s,100)}
 function updateQualification(){state.score=calcScore();$('#intentScore').textContent=state.score;$('#intentBar').style.width=state.score+'%';let band=state.score>=80?'HOT':state.score>=60?'QUALIFIED':state.score>=40?'MORE INFO':'RESEARCH';const e=$('#intentBand');e.textContent=band;e.className='status '+(band==='HOT'?'hot':band==='QUALIFIED'?'qualified':'research');const labels=[['product','Product / service'],['quantity','Quantity / size'],['location','Location'],['timeline','Timeline']];$('#qualList').innerHTML=labels.map(([k,l])=>`<div><span>${l}</span><b class="${state.answers[k]?'done':''}">${state.answers[k]?'✓ Captured':'○ Missing'}</b></div>`).join('')+`<div><span>Mobile verification</span><b class="${state.verified?'done':''}">${state.verified?'✓ Verified':'○ Pending'}</b></div>`}
-function resetBuyer(seed=true){state.step=0;state.answers={product:'',quantity:'',location:'',timeline:'',spec:''};state.verified=false;$('#chatBody').innerHTML='';$('#chatInputArea').style.display='flex';$('#flowProgressText').textContent='Step 1 of 4';$('#flowProgressBar').style.width='25%';addBubble('Hi — describe what your business needs. You do not need to create an account.');if(seed){const v=$('#heroRequirement').value.trim();if(v){$('#chatInput').value=v;setTimeout(sendChat,250)}}updateQualification()}
+function resetBuyer(seed=true){state.step=0;state.requirement='';state.answers={product:'',quantity:'',location:'',timeline:'',spec:''};state.verified=false;state.buyerSession=null;state.rfqId=null;state.apiMatches=[];$('#chatBody').innerHTML='';$('#chatInputArea').style.display='flex';$('#flowProgressText').textContent='Step 1 of 4';$('#flowProgressBar').style.width='25%';addBubble('Hi — describe what your business needs. You do not need to create an account.');if(seed){const v=$('#heroRequirement').value.trim();if(v){$('#chatInput').value=v;setTimeout(sendChat,250)}}updateQualification()}
 function inferRequirement(text){const t=text.toLowerCase();if(t.includes('epoxy')) state.answers.product='Industrial epoxy flooring';else if(t.includes('cement')) state.answers.product='OPC 53 grade cement';else if(t.includes('pouch')||t.includes('packag')) state.answers.product='Printed packaging';else state.answers.product=text.length>5?text:'';const qty=text.match(/([\d,]+\s*(?:bags?|kg|mt|tons?|pcs?|pieces?|sq\s*ft|sqm|litres?|l\b))/i);if(qty)state.answers.quantity=qty[1];if(/haridwar|sidcul/i.test(text))state.answers.location='SIDCUL, Haridwar';else if(/roorkee/i.test(text))state.answers.location='Roorkee';else if(/dehradun/i.test(text))state.answers.location='Dehradun';const time=text.match(/(by\s+\w+|within\s+\d+\s+(?:days?|weeks?)|urgent|today|tomorrow|this week)/i);if(time)state.answers.timeline=time[1]}
 function nextMissing(){return questions.find(q=>!state.answers[q.key])}
-function sendChat(){const input=$('#chatInput');const text=input.value.trim();if(!text)return;addBubble(text,'user');input.value='';if(state.step===0){inferRequirement(text);state.step=1}else{const q=nextMissing();if(q)state.answers[q.key]=text}updateQualification();setTimeout(()=>{const missing=nextMissing();if(missing){addBubble(missing.q);if(missing.key==='timeline')setQuick(['This week','Within 14 days','Within 30 days']);else if(missing.key==='spec'&&state.answers.product.toLowerCase().includes('epoxy'))setQuick(['3 mm heavy-duty','2 mm standard','Need supplier recommendation']);else setQuick([]);$('#chatInput').placeholder=missing.hint}else{setQuick([]);showOtpStep()}},300)}
-function showOtpStep(){state.step=2;$('#flowProgressText').textContent='Step 2 of 4';$('#flowProgressBar').style.width='50%';addBubble('Your requirement is detailed enough to qualify. Verify a mobile / WhatsApp number before we release it to suppliers.');const q=document.createElement('div');q.className='quick-options';q.innerHTML='<button id="demoOtp">Verify demo mobile →</button>';$('#chatBody').appendChild(q);$('#demoOtp').onclick=()=>{addBubble('+91 ••••• ••482','user');setTimeout(()=>{addBubble('Demo OTP sent. For this frontend preview, use 123456.');q.innerHTML='<button id="enterOtp">Enter demo OTP 123456</button>';$('#enterOtp').onclick=verifyDemoOtp},250)}}
-function verifyDemoOtp(){state.verified=true;updateQualification();addBubble('✓ Mobile verified. Your requirement is now qualified and ready for controlled supplier matching.');$('#flowProgressText').textContent='Step 4 of 4';$('#flowProgressBar').style.width='100%';setTimeout(()=>route('matches'),900)}
+function sendChat(){const input=$('#chatInput');const text=input.value.trim();if(!text)return;addBubble(text,'user');input.value='';if(state.step===0){state.requirement=text;inferRequirement(text);state.step=1}else{const q=nextMissing();if(q)state.answers[q.key]=text}updateQualification();setTimeout(()=>{const missing=nextMissing();if(missing){addBubble(missing.q);if(missing.key==='timeline')setQuick(['This week','Within 14 days','Within 30 days']);else if(missing.key==='spec'&&state.answers.product.toLowerCase().includes('epoxy'))setQuick(['3 mm heavy-duty','2 mm standard','Need supplier recommendation']);else setQuick([]);$('#chatInput').placeholder=missing.hint}else{setQuick([]);showOtpStep()}},300)}
+function showOtpStep(){
+  state.step=2;$('#flowProgressText').textContent='Step 2 of 4';$('#flowProgressBar').style.width='50%';
+  addBubble('Your requirement is detailed enough to qualify. Enter your mobile / WhatsApp number. It will stay protected from suppliers until you approve contact.');
+  const q=document.createElement('div');q.className='quick-options';q.innerHTML='<input id="buyerPhone" inputmode="tel" placeholder="+91 98XXXXXXXX" style="min-width:190px;padding:11px;border:1px solid #dce4e8;border-radius:9px"><button id="sendBuyerOtp">Send OTP →</button>';$('#chatBody').appendChild(q);
+  $('#sendBuyerOtp').onclick=async()=>{
+    const phone=$('#buyerPhone').value.trim(); if(phone.length<8){toast('Enter a valid mobile number');return}
+    $('#sendBuyerOtp').disabled=true; $('#sendBuyerOtp').textContent='Sending…';
+    try{
+      const s=await api('/api/buyer/sessions',{method:'POST',body:JSON.stringify({})}); state.buyerSession=s.session_id;
+      const r=await api('/api/rfqs',{method:'POST',body:JSON.stringify({session_id:state.buyerSession,requirement:state.requirement||state.answers.product,category:state.answers.product,quantity:state.answers.quantity,location:state.answers.location,timeline:state.answers.timeline,specifications:state.answers.spec})}); state.rfqId=r.id;
+      const sent=await api('/api/otp/send',{method:'POST',body:JSON.stringify({session_id:state.buyerSession,phone})});
+      addBubble('OTP sent. Enter the verification code to continue.'); q.innerHTML='<input id="buyerOtpCode" inputmode="numeric" placeholder="OTP code" style="min-width:150px;padding:11px;border:1px solid #dce4e8;border-radius:9px"><button id="verifyBuyerOtp">Verify OTP →</button>';
+      if(sent.dev_otp) addBubble('Development verification code: '+sent.dev_otp);
+      $('#verifyBuyerOtp').onclick=verifyBuyerOtp;
+    }catch(e){toast('Backend: '+e.message);$('#sendBuyerOtp').disabled=false;$('#sendBuyerOtp').textContent='Send OTP →'}
+  };
+}
+async function verifyBuyerOtp(){
+  const code=$('#buyerOtpCode')?.value.trim(); if(!code){toast('Enter OTP code');return}
+  try{
+    await api('/api/otp/verify',{method:'POST',body:JSON.stringify({session_id:state.buyerSession,code})});
+    state.verified=true;updateQualification();addBubble('✓ Mobile verified. RFQ saved and qualified for controlled supplier matching.');
+    $('#flowProgressText').textContent='Step 4 of 4';$('#flowProgressBar').style.width='100%';
+    const released=await api('/api/rfqs/'+state.rfqId+'/matches/release?batch=1',{method:'POST'});state.apiMatches=released.matches||[];
+    if(state.apiMatches.length){
+      const live=state.apiMatches.map((m,i)=>({name:m.supplier_name,initials:m.supplier_name.split(' ').map(x=>x[0]).join('').slice(0,2),location:'Matched to your RFQ',match:m.match_score,trade:m.trade_score,response:'Protected',orders:'—',badges:[m.verification,'Controlled batch #1']}));
+      $('#supplierResults').innerHTML=live.map(supplierCard).join('');
+      $$('#supplierResults [data-go]').forEach(el=>el.addEventListener('click',()=>route(el.dataset.go)));
+    }
+    setTimeout(()=>route('matches'),650);
+  }catch(e){toast('Verification: '+e.message)}
+}
 $('#chatSend').onclick=sendChat;$('#chatInput').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendChat()}});
 $('#heroStart').onclick=()=>{if(!$('#heroRequirement').value.trim()){$('#heroRequirement').value='Need 20,000 sq ft industrial epoxy flooring in SIDCUL Haridwar within 14 days'}route('buyer');setTimeout(()=>{resetBuyer(true)},100)};
 
@@ -415,7 +454,7 @@ function renderSellerWizard(){
   if($('#wizardNext')) $('#wizardNext').textContent=sellerWizardStep===4?'Finish & open dashboard →':'Continue →';
 }
 if($('#wizardBack')) $('#wizardBack').onclick=()=>{sellerWizardStep=Math.max(0,sellerWizardStep-1);renderSellerWizard()};
-if($('#wizardNext')) $('#wizardNext').onclick=()=>{if(sellerWizardStep<4){sellerWizardStep++;renderSellerWizard()}else{toast('Supplier profile completed in frontend demo');setSellerTab('overview');route('seller-dashboard')}};
+if($('#wizardNext')) $('#wizardNext').onclick=async()=>{if(sellerWizardStep<4){sellerWizardStep++;renderSellerWizard()}else{const b=$('#wizardNext');b.disabled=true;b.textContent='Saving…';try{await saveSellerProfile();toast('Supplier profile saved');setSellerTab('overview');route('seller-dashboard')}catch(e){toast('Profile: '+e.message)}finally{b.disabled=false;b.textContent='Finish & open dashboard →'}}};
 $$('.chip-select button').forEach(b=>b.onclick=()=>b.classList.toggle('selected'));
 
 // Seller workspace navigation
@@ -443,29 +482,42 @@ window.openQuoteBuilder=()=>{$('#quoteModal').classList.add('show');calcQuote()}
 
 /* Seller account entry flow */
 function setAuthPane(tab){
-  $('.auth-tabs [data-auth-pane]').forEach(b=>b.classList.toggle('active',b.dataset.authPane===tab));
-  $('[data-auth-content]').forEach(p=>p.classList.toggle('active',p.dataset.authContent===tab));
+  $$('.auth-tabs [data-auth-pane]').forEach(b=>b.classList.toggle('active',b.dataset.authPane===tab));
+  $$('[data-auth-content]').forEach(p=>p.classList.toggle('active',p.dataset.authContent===tab));
   if($('#sellerAccountCreated')) $('#sellerAccountCreated').classList.remove('show');
 }
-$('[data-auth-pane]').forEach(b=>b.addEventListener('click',()=>setAuthPane(b.dataset.authPane)));
-$('[data-switch-auth]').forEach(b=>b.addEventListener('click',()=>setAuthPane(b.dataset.switchAuth)));
-$('[data-auth-tab]').forEach(b=>b.addEventListener('click',()=>setTimeout(()=>setAuthPane(b.dataset.authTab),0)));
-if($('#sellerSignupForm')) $('#sellerSignupForm').addEventListener('submit',e=>{
-  e.preventDefault();
-  const p=$('#sellerPassword').value,p2=$('#sellerPassword2').value;
-  if(p!==p2){toast('Passwords do not match');return}
-  if(p.length<8){toast('Use at least 8 characters');return}
-  $('[data-auth-content]').forEach(x=>x.classList.remove('active'));
-  $('.auth-tabs').style.display='none';
-  $('#sellerAccountCreated').classList.add('show');
+$$('[data-auth-pane]').forEach(b=>b.addEventListener('click',()=>setAuthPane(b.dataset.authPane)));
+$$('[data-switch-auth]').forEach(b=>b.addEventListener('click',()=>setAuthPane(b.dataset.switchAuth)));
+$$('[data-auth-tab]').forEach(b=>b.addEventListener('click',()=>setTimeout(()=>setAuthPane(b.dataset.authTab),0)));
+if($('#sellerSignupForm')) $('#sellerSignupForm').addEventListener('submit',async e=>{
+  e.preventDefault();const p=$('#sellerPassword').value,p2=$('#sellerPassword2').value;
+  if(p!==p2){toast('Passwords do not match');return} if(p.length<8){toast('Use at least 8 characters');return}
+  const btn=e.submitter; if(btn){btn.disabled=true;btn.textContent='Creating account…'}
+  try{
+    const payload={full_name:$('#sellerName').value.trim(),business_name:$('#sellerBusiness').value.trim(),mobile:$('#sellerMobile').value.trim(),email:$('#sellerEmail').value.trim(),seller_type:$('#sellerType').value,category:$('#sellerCategory').value,password:p};
+    await api('/api/seller/accounts',{method:'POST',body:JSON.stringify(payload)});
+    const login=await api('/api/seller/login',{method:'POST',body:JSON.stringify({login:payload.email,password:p})});
+    localStorage.setItem('tradeai_seller_token',login.access_token);localStorage.setItem('tradeai_seller',JSON.stringify(login.seller));
+    $$('[data-auth-content]').forEach(x=>x.classList.remove('active'));$('.auth-tabs').style.display='none';$('#sellerAccountCreated').classList.add('show');
+  }catch(err){toast('Account: '+err.message)}
+  finally{if(btn){btn.disabled=false;btn.textContent='Create account & continue →'}}
 });
-if($('#continueSellerOnboarding')) $('#continueSellerOnboarding').onclick=()=>{
-  $('.auth-tabs').style.display='grid'; setAuthPane('signup'); sellerWizardStep=0; renderSellerWizard(); route('seller-onboarding');
-};
-if($('#sellerLoginForm')) $('#sellerLoginForm').addEventListener('submit',e=>{
-  e.preventDefault(); setSellerTab('overview'); toast('Seller workspace opened'); route('seller-dashboard');
+if($('#continueSellerOnboarding')) $('#continueSellerOnboarding').onclick=()=>{$('.auth-tabs').style.display='grid';setAuthPane('signup');sellerWizardStep=0;renderSellerWizard();route('seller-onboarding')};
+if($('#sellerLoginForm')) $('#sellerLoginForm').addEventListener('submit',async e=>{
+  e.preventDefault();const btn=e.submitter;if(btn){btn.disabled=true;btn.textContent='Signing in…'}
+  try{
+    const login=await api('/api/seller/login',{method:'POST',body:JSON.stringify({login:$('#sellerLoginId').value.trim(),password:$('#sellerLoginPassword').value})});
+    localStorage.setItem('tradeai_seller_token',login.access_token);localStorage.setItem('tradeai_seller',JSON.stringify(login.seller));setSellerTab('overview');toast('Seller account connected');route('seller-dashboard');
+  }catch(err){toast('Login: '+err.message)}
+  finally{if(btn){btn.disabled=false;btn.textContent='Login to Seller Dashboard →'}}
 });
 
+async function saveSellerProfile(){
+  const token=localStorage.getItem('tradeai_seller_token'); if(!token) throw new Error('Please login to your seller account first');
+  const caps=$$('.chip-select button.selected').map(x=>x.textContent.trim());
+  const locs=($('#profileLocations')?.value||'').split(',').map(x=>x.trim()).filter(Boolean);
+  return api('/api/seller/profile',{method:'PUT',body:JSON.stringify({gstin:$('#profileGstin')?.value||'',udyam:$('#profileUdyam')?.value||'',year_established:$('#profileYear')?.value||'',team_size:$('#profileTeam')?.value||'',description:$('#profileDescription')?.value||'',capabilities:caps,service_locations:locs,capacity:'75,000 sq ft / month',moq:'1,000 sq ft'})});
+}
 route(location.hash.slice(1)||'home');
 
 </script>
