@@ -5,3 +5,30 @@ services:
     buildCommand: echo "Static frontend - no build required"
     staticPublishPath: .
     autoDeployTrigger: commit
+
+  - type: web
+    runtime: python
+    name: tradeai-api-pgvr
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    autoDeployTrigger: commit
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: tradeai-postgres
+          property: connectionString
+      - key: TRADEAI_ENV
+        value: development
+      - key: TRADEAI_QUALIFIED_THRESHOLD
+        value: "60"
+      - key: TRADEAI_OTP_TTL_MINUTES
+        value: "10"
+      - key: TRADEAI_CORS_ORIGINS
+        value: https://tradeai-pgvr.onrender.com
+
+databases:
+  - name: tradeai-postgres
+    databaseName: tradeai
+    user: tradeai
