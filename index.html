@@ -345,7 +345,7 @@ body{overflow-x:hidden}.site-header{box-shadow:0 1px 0 rgba(7,24,39,.04)}
 
   <div class="mobile-dock"><button data-go="home" class="active"><span>⌂</span>Home</button><button data-go="buyer"><span>✦</span>Enquire</button><button data-go="discover"><span>⌕</span>Suppliers</button><button data-go="seller"><span>▦</span>Sell</button></div>
 
-  <footer><div class="container footer-inner"><div><a class="brand" href="#home" data-nav="home"><span class="brand-mark">T</span><span>TradeAI</span></a><p>AI-qualified B2B trade network · Complete frontend preview v1.0.</p></div><div><b>Prototype</b><a href="#buyer" data-nav="buyer">Buyer flow</a><a href="#seller-dashboard" data-nav="seller-dashboard">Seller dashboard</a><a href="#admin" data-nav="admin">Admin</a></div><div><b>System status</b><span id="footerAiStatus">Adaptive AI ready</span><span id="footerOtpStatus">WhatsApp OTP integration ready</span><span>Live PostgreSQL backend</span></div></div></footer>
+  <footer><div class="container footer-inner"><div><a class="brand" href="#home" data-nav="home"><span class="brand-mark">T</span><span>TradeAI</span></a><p>AI-qualified B2B trade network · Complete frontend preview v1.0.</p></div><div><b>Prototype</b><a href="#buyer" data-nav="buyer">Buyer flow</a><a href="#seller-dashboard" data-nav="seller-dashboard">Seller dashboard</a><a href="#admin" data-nav="admin">Admin</a></div><div><b>System status</b><span id="footerAiStatus">Adaptive AI ready</span><span id="footerOtpStatus">SMS OTP integration ready</span><span>Live PostgreSQL backend</span></div></div></footer>
 
   <div class="toast" id="toast"></div>
   <div class="modal-backdrop" id="sellerDealModal"><div class="modal" style="max-width:720px"><button class="modal-x" id="sellerDealClose">×</button><span class="kicker">PRIVATE DEAL ROOM</span><h2 id="sellerDealTitle">Buyer negotiation</h2><div class="seller-deal-meta"><div><small>RFQ</small><b id="sellerDealRfq">—</b></div><div><small>CONTACT</small><b id="sellerDealContact">Protected</b></div><div><small>ORDER</small><b id="sellerDealOrder">Not confirmed</b></div></div><div class="deal-messages" id="sellerDealMessages"></div><div class="deal-compose"><input id="sellerDealInput" placeholder="Reply to buyer"><button class="btn btn-dark" id="sellerDealSend">Send reply</button></div><small style="display:block;margin-top:10px;color:var(--muted)">Buyer contact appears here only after explicit consent.</small></div></div>
@@ -464,7 +464,7 @@ async function loadSystemStatus(){
     const h=await api('/api/health'), ai=h.ai||{}, wa=h.whatsapp||{};
     if($('#aiModeStatus'))$('#aiModeStatus').innerHTML='<i></i> '+(ai.configured?'OpenAI qualification connected':'Adaptive rules fallback');
     if($('#footerAiStatus'))$('#footerAiStatus').textContent=ai.configured?'OpenAI qualification connected':'AI provider key pending · adaptive fallback active';
-    if($('#footerOtpStatus'))$('#footerOtpStatus').textContent=(wa.configured&&wa.otp_template_configured)?'WhatsApp OTP connected':'WhatsApp credentials/template pending · development OTP active';
+    if($('#footerOtpStatus')){const sms=h.sms||{};$('#footerOtpStatus').textContent=sms.configured?'4-digit SMS OTP connected':'SMS credentials/template pending · 4-digit development OTP active';}
   }catch(e){}
 }
 loadSystemStatus();
@@ -501,7 +501,7 @@ async function sendChat(){
 }
 function showOtpStep(){
   state.step=2;$('#flowProgressText').textContent='Step 2 of 4';$('#flowProgressBar').style.width='50%';
-  addBubble('Your requirement is detailed enough to qualify. Enter your mobile / WhatsApp number. It will stay protected from suppliers until you approve contact.');
+  addBubble('Your requirement is detailed enough to qualify. Enter your mobile number. We will send a 4-digit OTP by SMS. Your number stays protected from suppliers until you approve contact.');
   const q=document.createElement('div');q.className='quick-options';q.innerHTML='<input id="buyerPhone" inputmode="tel" placeholder="+91 98XXXXXXXX" style="min-width:190px;padding:11px;border:1px solid #dce4e8;border-radius:9px"><button id="sendBuyerOtp">Send OTP →</button>';$('#chatBody').appendChild(q);
   $('#sendBuyerOtp').onclick=async()=>{
     const phone=$('#buyerPhone').value.trim(); if(phone.length<8){toast('Enter a valid mobile number');return}
@@ -510,14 +510,14 @@ function showOtpStep(){
       const s=await api('/api/buyer/sessions',{method:'POST',body:JSON.stringify({})}); state.buyerSession=s.session_id;
       const r=await api('/api/rfqs',{method:'POST',body:JSON.stringify({session_id:state.buyerSession,requirement:state.requirement||state.answers.product,category:state.answers.product,quantity:state.answers.quantity,location:state.answers.location,timeline:state.answers.timeline,specifications:state.answers.spec})}); state.rfqId=r.id; localStorage.setItem('tradeai_buyer_session',state.buyerSession);localStorage.setItem('tradeai_rfq_id',state.rfqId);
       const sent=await api('/api/otp/send',{method:'POST',body:JSON.stringify({session_id:state.buyerSession,phone})});
-      addBubble(sent.channel==='whatsapp'?'OTP sent on WhatsApp. Enter the verification code to continue.':'OTP prepared in development mode. Enter the verification code to continue.'); q.innerHTML='<input id="buyerOtpCode" inputmode="numeric" placeholder="OTP code" style="min-width:150px;padding:11px;border:1px solid #dce4e8;border-radius:9px"><button id="verifyBuyerOtp">Verify OTP →</button>';
+      addBubble(sent.channel==='sms'?'4-digit OTP sent by SMS. Enter the code to continue.':'4-digit OTP prepared in development mode. Enter the code to continue.'); q.innerHTML='<input id="buyerOtpCode" inputmode="numeric" maxlength="4" pattern="[0-9]{4}" placeholder="4-digit OTP" style="min-width:150px;padding:11px;border:1px solid #dce4e8;border-radius:9px"><button id="verifyBuyerOtp">Verify OTP →</button>';
       if(sent.dev_otp) addBubble('Development verification code: '+sent.dev_otp);
       $('#verifyBuyerOtp').onclick=verifyBuyerOtp;
     }catch(e){toast('Backend: '+e.message);$('#sendBuyerOtp').disabled=false;$('#sendBuyerOtp').textContent='Send OTP →'}
   };
 }
 async function verifyBuyerOtp(){
-  const code=$('#buyerOtpCode')?.value.trim(); if(!code){toast('Enter OTP code');return}
+  const code=$('#buyerOtpCode')?.value.trim(); if(!/^\d{4}$/.test(code||'')){toast('Enter the 4-digit OTP');return}
   try{
     await api('/api/otp/verify',{method:'POST',body:JSON.stringify({session_id:state.buyerSession,code})});
     state.verified=true;updateQualification();addBubble('✓ Mobile verified. RFQ saved and qualified for controlled supplier matching.');
