@@ -52,12 +52,12 @@ def test_buyer_qualification_otp_top3_quote_flow():
     rid = rfq["id"]
 
     send = client.post("/api/otp/send", json={"session_id": s, "phone": "+919999999999"}).json()
-    assert send["dev_otp"] == "123456"
+    assert send["dev_otp"] == "1234"
     assert send["channel"] == "development"
     events = client.get(f"/api/notifications/{s}").json()
     assert any(x["kind"] == "buyer_otp" for x in events)
 
-    verify = client.post("/api/otp/verify", json={"session_id": s, "code": "123456"})
+    verify = client.post("/api/otp/verify", json={"session_id": s, "code": "1234"})
     assert verify.status_code == 200 and verify.json()["verified"] is True
     assert verify.json()["rfqs"][0]["status"] in ("qualified", "hot")
 
@@ -145,7 +145,7 @@ def test_verified_registered_seller_receives_real_opportunity():
     s = new_buyer()
     rfq = full_rfq(s)
     client.post("/api/otp/send", json={"session_id": s, "phone": "+919999999997"})
-    client.post("/api/otp/verify", json={"session_id": s, "code": "123456"})
+    client.post("/api/otp/verify", json={"session_id": s, "code": "1234"})
     first = client.post(f"/api/rfqs/{rfq['id']}/matches/release?batch=1").json()["matches"]
     second = client.post(f"/api/rfqs/{rfq['id']}/matches/release?batch=2").json()["matches"]
     released_ids = [x["supplier_id"] for x in first + second]
@@ -163,7 +163,7 @@ def test_authenticated_seller_quote_and_buyer_comparison():
     rfq = full_rfq(s)
     rid = rfq["id"]
     client.post("/api/otp/send", json={"session_id": s, "phone": "+919999999996"})
-    client.post("/api/otp/verify", json={"session_id": s, "code": "123456"})
+    client.post("/api/otp/verify", json={"session_id": s, "code": "1234"})
     client.post(f"/api/rfqs/{rid}/matches/release?batch=1")
     client.post(f"/api/rfqs/{rid}/matches/release?batch=2")
     sent = client.post(f"/api/seller/rfqs/{rid}/quotes", headers=headers, json={
@@ -186,7 +186,7 @@ def test_deal_room_consent_and_order_lifecycle():
     rfq = full_rfq(s)
     rid = rfq["id"]
     client.post("/api/otp/send", json={"session_id": s, "phone": "9999999995"})
-    client.post("/api/otp/verify", json={"session_id": s, "code": "123456"})
+    client.post("/api/otp/verify", json={"session_id": s, "code": "1234"})
     client.post(f"/api/rfqs/{rid}/matches/release?batch=1")
     client.post(f"/api/rfqs/{rid}/matches/release?batch=2")
     sent = client.post(f"/api/seller/rfqs/{rid}/quotes", headers=headers, json={
@@ -227,12 +227,12 @@ def test_duplicate_verified_mobile_is_held_for_admin_review():
     s1 = new_buyer()
     r1 = full_rfq(s1)
     client.post("/api/otp/send", json={"session_id": s1, "phone": "+919999999991"})
-    client.post("/api/otp/verify", json={"session_id": s1, "code": "123456"})
+    client.post("/api/otp/verify", json={"session_id": s1, "code": "1234"})
 
     s2 = new_buyer()
     r2 = full_rfq(s2)
     client.post("/api/otp/send", json={"session_id": s2, "phone": "+919999999991"})
-    verified = client.post("/api/otp/verify", json={"session_id": s2, "code": "123456"})
+    verified = client.post("/api/otp/verify", json={"session_id": s2, "code": "1234"})
     assert verified.status_code == 200
     detail = client.get(f"/api/rfqs/{r2['id']}").json()
     assert detail["fraud"]["decision"] == "review"
@@ -272,7 +272,7 @@ def test_admin_controls_and_automatic_second_batch():
     }).json()
     rid = rfq["id"]
     client.post("/api/otp/send", json={"session_id": s, "phone": "+919999999990"})
-    client.post("/api/otp/verify", json={"session_id": s, "code": "123456"})
+    client.post("/api/otp/verify", json={"session_id": s, "code": "1234"})
     first = client.post(f"/api/rfqs/{rid}/matches/release?batch=1")
     assert first.status_code == 200 and len(first.json()["matches"]) == 3
 
@@ -297,7 +297,7 @@ def test_supplier_question_and_call_require_buyer_consent():
     rid = rfq["id"]
     phone = "+919999999989"
     client.post("/api/otp/send", json={"session_id": s, "phone": phone})
-    client.post("/api/otp/verify", json={"session_id": s, "code": "123456"})
+    client.post("/api/otp/verify", json={"session_id": s, "code": "1234"})
     client.post(f"/api/rfqs/{rid}/matches/release?batch=1")
     client.post(f"/api/rfqs/{rid}/matches/release?batch=2")
 
@@ -366,4 +366,16 @@ def test_health_exposes_safe_integration_readiness():
     data = h.json()
     assert data["production_readiness"]["otp_hashed_at_rest"] is True
     assert data["production_readiness"]["otp_resend_cooldown_seconds"] >= 0
-    assert "configured" in data["ai"] and "configured" in data["whatsapp"]
+    assert "configured" in data["ai"] and "configured" in data["sms"] and data["sms"]["otp_digits"] == 4
+
+
+def test_otp_contract_is_four_digit_sms():
+    s = new_buyer()
+    sent = client.post("/api/otp/send", json={"session_id": s, "phone": "+919999999987"})
+    assert sent.status_code == 200
+    data = sent.json()
+    assert data["otp_digits"] == 4
+    assert len(data["dev_otp"]) == 4 and data["dev_otp"].isdigit()
+    assert data["channel"] == "development"
+    invalid = client.post("/api/otp/verify", json={"session_id": s, "code": "123456"})
+    assert invalid.status_code == 422
