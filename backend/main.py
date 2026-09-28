@@ -333,26 +333,13 @@ def buyer_compare(rid:str,session_id:str):
         if r["session_id"]!=session_id: raise HTTPException(403,"RFQ does not belong to this buyer session")
         return build_quote_comparison(c,rid)
 
-@app.post("/api/rfqs/{rid}/quotes",status_code=201)
-def quote(rid:str,p:QuoteIn):
-    qid="quo-"+uuid.uuid4().hex[:14]
-    with engine.begin() as c:
-        get_rfq(c,rid)
-        if not c.execute(select(matches.c.id).where(matches.c.rfq_id==rid,matches.c.supplier_id==p.supplier_id)).first(): raise HTTPException(403,"Supplier is not released for this RFQ")
-        x=p.model_dump(); c.execute(insert(quotes).values(id=qid,rfq_id=rid,created_at=utcnow(),**x))
-        return {"quote_id":qid,"landed_price":round(x["unit_price"]*x["quantity"]*(1+x["tax_percent"]/100)+x["freight"],2)}
-
-def build_quote_comparison(c,rid):
-    q=select(quotes,suppliers.c.name.label("supplier_name"),suppliers.c.verification,suppliers.c.trade_score,matches.c.match_score).join(suppliers,suppliers.c.id==quotes.c.supplier_id).join(matches,and_(matches.c.rfq_id==quotes.c.rfq_id,matches.c.supplier_id==quotes.c.supplier_id)).where(quotes.c.rfq_id==rid); items=[]
-    for r in c.execute(q).all():
-        x=rowdict(r); x["landed_price"]=round(x["unit_price"]*x["quantity"]*(1+x["tax_percent"]/100)+x["freight"],2); items.append(x)
-    if not items:return {"quotes":[],"objective_highlights":{}}
-    return {"quotes":items,"objective_highlights":{"lowest_landed_price_quote_id":min(items,key=lambda x:x["landed_price"])["id"],"fastest_delivery_quote_id":min(items,key=lambda x:x["delivery_days"])["id"],"longest_warranty_quote_id":max(items,key=lambda x:x["warranty_months"])["id"]}}
+@app.post("/api/rfqs/{rid}/quotes")
+def legacy_quote_endpoint(rid:str):
+    raise HTTPException(410,"Use the authenticated seller quotation endpoint")
 
 @app.get("/api/rfqs/{rid}/quotes/compare")
-def compare(rid:str):
-    with engine.connect() as c:
-        get_rfq(c,rid); return build_quote_comparison(c,rid)
+def legacy_compare_endpoint(rid:str):
+    raise HTTPException(410,"Use the buyer-session quotation comparison endpoint")
 
 @app.get("/api/admin/sellers")
 def admin_sellers(x_admin_token:str|None=Header(default=None)):
