@@ -205,3 +205,16 @@ def test_deal_room_consent_and_order_lifecycle():
     progress = client.patch(f"/api/seller/orders/{oid}/status", headers=headers, json={"status": "in_progress"})
     assert progress.status_code == 200
     assert any(x["id"] == oid for x in client.get("/api/seller/orders", headers=headers).json())
+
+
+def test_adaptive_qualification_fallback():
+    r = client.post("/api/ai/qualify", json={
+        "requirement": "Need 500 bags OPC 53 grade cement in Roorkee within 7 days",
+        "answers": {}
+    })
+    assert r.status_code == 200
+    data = r.json()
+    assert data["fields"]["category"] == "cement"
+    assert "500 bags" in data["fields"]["quantity"]
+    assert data["fields"]["location"] == "Roorkee"
+    assert data["next_field"] == "specifications"
