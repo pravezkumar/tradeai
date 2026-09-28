@@ -174,3 +174,34 @@ def test_authenticated_seller_quote_and_buyer_comparison():
     buyer = client.get(f"/api/buyer/rfqs/{rid}/quotes/compare?session_id={s}")
     assert buyer.status_code == 200
     assert any(x["supplier_id"] == sent.json()["supplier_id"] for x in buyer.json()["quotes"])
+
+
+def test_deal_room_consent_and_order_lifecycle():
+    login = client.post("/api/seller/login", json={"login": "cement@test.local", "password": "TradeAITest123"}).json()
+    headers = {"Authorization": "Bearer " + login["access_token"]}
+    s = new_buyer()
+    rfq = full_rfq(s)
+    rid = rfq["id"]
+    client.post("/api/otp/send", json={"session_id": s, "phone": "9999999995"})
+    client.post("/api/otp/verify", json={"session_id": s, "code": "123456"})
+    client.post(f"/api/rfqs/{rid}/matches/release?batch=1")
+    client.post(f"/api/rfqs/{rid}/matches/release?batch=2")
+    sent = client.post(f"/api/seller/rfqs/{rid}/quotes", headers=headers, json={
+        "unit_price": 340, "quantity": 500, "tax_percent": 18, "freight": 2500,
+        "delivery_days": 4, "warranty_months": 6, "validity_days": 7
+    }).json()
+    deal = client.post(f"/api/buyer/rfqs/{rid}/deal-room", json={
+        "session_id": s, "quote_id": sent["quote_id"], "message": "Please confirm delivery."
+    })
+    assert deal.status_code == 201
+    did = deal.json()["deal"]["id"]
+    reply = client.post(f"/api/seller/deals/{did}/messages", headers=headers, json={"message": "Delivery confirmed."})
+    assert reply.status_code == 201
+    consent = client.put(f"/api/buyer/deals/{did}/contact-consent", json={"session_id": s, "approved": True})
+    assert consent.status_code == 200 and consent.json()["buyer_contact_shared"] is True
+    order = client.post(f"/api/buyer/deals/{did}/orders", json={"session_id": s, "confirm_terms": True})
+    assert order.status_code == 201 and order.json()["status"] == "confirmed"
+    oid = order.json()["id"]
+    progress = client.patch(f"/api/seller/orders/{oid}/status", headers=headers, json={"status": "in_progress"})
+    assert progress.status_code == 200
+    assert any(x["id"] == oid for x in client.get("/api/seller/orders", headers=headers).json())
