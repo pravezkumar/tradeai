@@ -59,6 +59,13 @@ rfqs=Table("rfqs",md,
     Column("created_at",DateTime(timezone=True),nullable=False),Column("updated_at",DateTime(timezone=True),nullable=False))
 otp_codes=Table("otp_codes",md,Column("session_id",String(40),primary_key=True),Column("code",String(12),nullable=False),
     Column("expires_at",DateTime(timezone=True),nullable=False),Column("attempts",Integer,nullable=False,default=0))
+buyer_recovery_challenges=Table("buyer_recovery_challenges",md,Column("id",String(40),primary_key=True),
+    Column("phone",String(30),nullable=False,index=True),Column("code_hash",String(64),nullable=False),
+    Column("expires_at",DateTime(timezone=True),nullable=False),Column("attempts",Integer,nullable=False,default=0),
+    Column("created_at",DateTime(timezone=True),nullable=False))
+buyer_recovery_tokens=Table("buyer_recovery_tokens",md,Column("token_hash",String(64),primary_key=True),
+    Column("phone",String(30),nullable=False,index=True),Column("created_at",DateTime(timezone=True),nullable=False),
+    Column("expires_at",DateTime(timezone=True),nullable=False))
 seller_accounts=Table("seller_accounts",md,
     Column("id",String(40),primary_key=True),Column("full_name",String(100),nullable=False),Column("business_name",String(160),nullable=False),
     Column("mobile",String(30),nullable=False,unique=True),Column("email",String(160),nullable=False,unique=True),
@@ -137,7 +144,7 @@ def init_db():
                 c.execute(insert(system_settings).values(key=key,value=value,updated_at=utcnow()))
 
 init_db()
-app=FastAPI(title="TradeAI API",version="1.9.0")
+app=FastAPI(title="TradeAI API",version="2.0.0")
 app.add_middleware(CORSMiddleware,allow_origins=[x.strip() for x in os.getenv("TRADEAI_CORS_ORIGINS","https://tradeai-pgvr.onrender.com,http://localhost:8000,http://127.0.0.1:8000").split(",") if x.strip()],allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
 
 async def routing_background_loop():
@@ -160,6 +167,9 @@ class QualificationIn(BaseModel):
     category:str|None=None; quantity:str|None=None; location:str|None=None; timeline:str|None=None; specifications:str|None=None; budget:str|None=None
 class OTPIn(BaseModel): session_id:str; phone:str=Field(min_length=8,max_length=20)
 class OTPVerify(BaseModel): session_id:str; code:str=Field(min_length=4,max_length=4,pattern=r"^\d{4}$")
+class BuyerRecoveryStartIn(BaseModel): phone:str=Field(min_length=8,max_length=20)
+class BuyerRecoveryVerifyIn(BaseModel):
+    challenge_id:str; code:str=Field(min_length=4,max_length=4,pattern=r"^\d{4}$")
 class SellerAccountIn(BaseModel):
     full_name:str=Field(min_length=2,max_length=100); business_name:str=Field(min_length=2,max_length=160); mobile:str=Field(min_length=8,max_length=20); email:str=Field(min_length=5,max_length=160); seller_type:str=Field(min_length=2,max_length=80); category:str=Field(min_length=2,max_length=120); password:str=Field(min_length=8,max_length=200)
 class SellerLoginIn(BaseModel): login:str=Field(min_length=5,max_length=160); password:str=Field(min_length=8,max_length=200)
@@ -312,7 +322,7 @@ def sync_registered_supplier(c,sid):
     return vals
 
 @app.get("/")
-def root(): return {"service":"TradeAI API","status":"ok","version":"1.9.0"}
+def root(): return {"service":"TradeAI API","status":"ok","version":"2.0.0"}
 @app.get("/api/health")
 def health():
     with engine.connect() as c: c.execute(select(1)).scalar_one()
@@ -325,7 +335,7 @@ def health():
         "sms":{"provider":"msg91","configured":sms_ready,"otp_digits":4},
         "whatsapp":{"configured":wa_transport,"rfq_template_configured":bool(WA_RFQ_TEMPLATE),
             "webhook_verify_configured":bool(WA_VERIFY_TOKEN),"webhook_signature_configured":bool(META_APP_SECRET),"graph_version":META_GRAPH_VERSION},
-        "production_readiness":{"ai":ai_ready,"sms_otp":sms_ready,"whatsapp_rfq":wa_ready,"otp_hashed_at_rest":True,"otp_resend_cooldown_seconds":OTP_COOLDOWN_SECONDS}}
+        "production_readiness":{"ai":ai_ready,"sms_otp":sms_ready,"whatsapp_rfq":wa_ready,"otp_hashed_at_rest":True,"otp_resend_cooldown_seconds":OTP_COOLDOWN_SECONDS,"buyer_passwordless_recovery":True}}
 
 
 AI_FIELDS=("category","quantity","location","timeline","specifications","budget")
@@ -414,6 +424,24 @@ def normalize_phone(phone):
 
 def otp_digest(session_id,code):
     return hmac.new(OTP_SECRET.encode(),f"{session_id}:{code}".encode(),hashlib.sha256).hexdigest()
+
+def recovery_digest(challenge_id,code):
+    return hmac.new(OTP_SECRET.encode(),f"recovery:{challenge_id}:{code}".encode(),hashlib.sha256).hexdigest()
+
+def recovery_token_hash(token):
+    return hashlib.sha256(token.encode()).hexdigest()
+
+def auth_buyer_recovery(c,authorization):
+    if not authorization or not authorization.lower().startswith("bearer "):raise HTTPException(401,"Buyer recovery login required")
+    raw=authorization.split(" ",1)[1].strip()
+    row=c.execute(select(buyer_recovery_tokens).where(buyer_recovery_tokens.c.token_hash==recovery_token_hash(raw))).first()
+    if not row or as_utc(rowdict(row)["expires_at"])<utcnow():raise HTTPException(401,"Buyer recovery session expired or invalid")
+    return rowdict(row)["phone"]
+
+def sessions_for_phone(c,phone):
+    target=normalize_phone(phone)
+    rows=c.execute(select(buyer_sessions).where(buyer_sessions.c.verified==True,buyer_sessions.c.phone.is_not(None))).all()
+    return [rowdict(x) for x in rows if normalize_phone(rowdict(x)["phone"])==target]
 
 def redact_sensitive(value,secrets_to_hide=()):
     if value is None:return None
@@ -586,6 +614,76 @@ def otp_verify(p:OTPVerify):
         c.execute(delete(otp_codes).where(otp_codes.c.session_id==p.session_id))
         ids=c.execute(select(rfqs.c.id).where(rfqs.c.session_id==p.session_id)).scalars().all(); scored=[rescore(c,r) for r in ids]
         return {"verified":True,"rfqs":[{"id":x["id"],"intent_score":x["intent_score"],"status":x["status"]} for x in scored]}
+
+@app.post("/api/buyer/recovery/start")
+def buyer_recovery_start(p:BuyerRecoveryStartIn):
+    phone=normalize_phone(p.phone)
+    if len(phone)<10 or len(phone)>15:raise HTTPException(422,"Enter a valid mobile number")
+    code=DEV_OTP if ENV!="production" else f"{secrets.randbelow(10000):04d}"
+    now=utcnow(); cid="rec-"+uuid.uuid4().hex[:14]; exp=now+timedelta(minutes=OTP_TTL)
+    with engine.begin() as c:
+        recent=c.execute(select(buyer_recovery_challenges.c.created_at).where(
+            buyer_recovery_challenges.c.phone==phone).order_by(buyer_recovery_challenges.c.created_at.desc())).scalar()
+        if recent and OTP_COOLDOWN_SECONDS:
+            wait=OTP_COOLDOWN_SECONDS-int((now-as_utc(recent)).total_seconds())
+            if wait>0:raise HTTPException(429,f"Please wait {wait} seconds before requesting another OTP")
+        c.execute(delete(buyer_recovery_challenges).where(buyer_recovery_challenges.c.phone==phone))
+        c.execute(insert(buyer_recovery_challenges).values(id=cid,phone=phone,code_hash=recovery_digest(cid,code),expires_at=exp,attempts=0,created_at=now))
+        delivery=send_otp_sms(phone,code)
+        status=delivery["status"] if delivery["configured"] else ("development" if ENV!="production" else "not_configured")
+        record_notification(c,"buyer_recovery_otp",phone,status,session_id=cid,provider_message_id=delivery.get("message_id"),
+            error=delivery.get("error"),payload=delivery.get("payload"),channel="sms")
+        if ENV=="production" and not delivery["configured"]:raise HTTPException(503,"SMS OTP is not configured")
+        if ENV=="production" and delivery["status"]=="failed":raise HTTPException(502,"SMS OTP delivery was rejected by provider")
+    out={"challenge_id":cid,"sent":True,"channel":"sms" if delivery["configured"] else "development",
+        "otp_digits":4,"expires_in_minutes":OTP_TTL,"resend_after_seconds":OTP_COOLDOWN_SECONDS}
+    if ENV!="production":out["dev_otp"]=code
+    return out
+
+@app.post("/api/buyer/recovery/verify")
+def buyer_recovery_verify(p:BuyerRecoveryVerifyIn):
+    with engine.begin() as c:
+        row=c.execute(select(buyer_recovery_challenges).where(buyer_recovery_challenges.c.id==p.challenge_id)).first()
+        if not row:raise HTTPException(404,"Recovery OTP not requested or expired")
+        x=rowdict(row)
+        if x["attempts"]>=5:raise HTTPException(429,"Too many OTP attempts")
+        c.execute(update(buyer_recovery_challenges).where(buyer_recovery_challenges.c.id==p.challenge_id).values(attempts=x["attempts"]+1))
+        if as_utc(x["expires_at"])<utcnow():raise HTTPException(410,"Recovery OTP expired")
+        if not secrets.compare_digest(x["code_hash"],recovery_digest(p.challenge_id,p.code)):raise HTTPException(400,"Invalid OTP")
+        raw=secrets.token_urlsafe(32); now=utcnow(); expiry=now+timedelta(days=7)
+        c.execute(delete(buyer_recovery_tokens).where(buyer_recovery_tokens.c.phone==x["phone"]))
+        c.execute(insert(buyer_recovery_tokens).values(token_hash=recovery_token_hash(raw),phone=x["phone"],created_at=now,expires_at=expiry))
+        c.execute(delete(buyer_recovery_challenges).where(buyer_recovery_challenges.c.id==p.challenge_id))
+        sessions=sessions_for_phone(c,x["phone"])
+        return {"verified":True,"access_token":raw,"expires_in_days":7,"workspace_count":len(sessions)}
+
+@app.get("/api/buyer/recovery/workspace")
+def buyer_recovery_workspace(authorization:str|None=Header(default=None)):
+    with engine.connect() as c:
+        phone=auth_buyer_recovery(c,authorization); sessions=sessions_for_phone(c,phone); session_ids=[x["id"] for x in sessions]
+        if not session_ids:return {"phone_masked":"••••"+phone[-4:],"rfqs":[],"summary":{"rfqs":0,"quotes":0,"requests":0,"deals":0,"orders":0}}
+        rfq_rows=[rowdict(x) for x in c.execute(select(rfqs).where(rfqs.c.session_id.in_(session_ids)).order_by(rfqs.c.updated_at.desc())).all()]
+        items=[]; total_quotes=total_requests=total_deals=total_orders=0
+        for r in rfq_rows:
+            quote_count=c.execute(select(func.count()).select_from(quotes).where(quotes.c.rfq_id==r["id"])).scalar_one()
+            request_count=c.execute(select(func.count()).select_from(supplier_requests).where(supplier_requests.c.rfq_id==r["id"],supplier_requests.c.buyer_session_id==r["session_id"])).scalar_one()
+            deals=[rowdict(x) for x in c.execute(select(deal_rooms).where(deal_rooms.c.rfq_id==r["id"],deal_rooms.c.buyer_session_id==r["session_id"]).order_by(deal_rooms.c.updated_at.desc())).all()]
+            order_rows=[rowdict(x) for x in c.execute(select(orders).where(orders.c.rfq_id==r["id"],orders.c.buyer_session_id==r["session_id"]).order_by(orders.c.updated_at.desc())).all()]
+            total_quotes+=quote_count;total_requests+=request_count;total_deals+=len(deals);total_orders+=len(order_rows)
+            items.append({"rfq_id":r["id"],"session_id":r["session_id"],"requirement":r["requirement"],"category":r["category"],
+                "quantity":r["quantity"],"location":r["location"],"timeline":r["timeline"],"status":r["status"],"intent_score":r["intent_score"],
+                "updated_at":r["updated_at"],"quote_count":quote_count,"request_count":request_count,
+                "latest_deal_id":deals[0]["id"] if deals else None,"deal_status":deals[0]["status"] if deals else None,
+                "order_id":order_rows[0]["id"] if order_rows else None,"order_status":order_rows[0]["status"] if order_rows else None})
+        return {"phone_masked":"••••"+phone[-4:],"rfqs":items,
+            "summary":{"rfqs":len(items),"quotes":total_quotes,"requests":total_requests,"deals":total_deals,"orders":total_orders}}
+
+@app.delete("/api/buyer/recovery/session")
+def buyer_recovery_logout(authorization:str|None=Header(default=None)):
+    with engine.begin() as c:
+        phone=auth_buyer_recovery(c,authorization)
+        c.execute(delete(buyer_recovery_tokens).where(buyer_recovery_tokens.c.phone==phone))
+        return {"logged_out":True}
 
 @app.post("/api/seller/accounts",status_code=201)
 def seller_account(p:SellerAccountIn):
