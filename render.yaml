@@ -26,6 +26,22 @@ services:
         value: "10"
       - key: TRADEAI_CORS_ORIGINS
         value: https://tradeai-pgvr.onrender.com
+      - key: TRADEAI_AI_MODE
+        value: auto
+      - key: TRADEAI_OPENAI_MODEL
+        value: gpt-5
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: TRADEAI_WHATSAPP_ACCESS_TOKEN
+        sync: false
+      - key: TRADEAI_WHATSAPP_PHONE_NUMBER_ID
+        sync: false
+      - key: TRADEAI_WA_OTP_TEMPLATE
+        sync: false
+      - key: TRADEAI_WA_RFQ_TEMPLATE
+        sync: false
+      - key: TRADEAI_WA_VERIFY_TOKEN
+        sync: false
 
 databases:
   - name: tradeai-postgres
