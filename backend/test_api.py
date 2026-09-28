@@ -430,3 +430,72 @@ def test_recovery_does_not_reveal_unknown_phone_before_verification():
     assert verified.status_code == 200 and verified.json()["workspace_count"] == 0
     workspace = client.get("/api/buyer/recovery/workspace", headers={"Authorization": "Bearer " + verified.json()["access_token"]})
     assert workspace.status_code == 200 and workspace.json()["rfqs"] == []
+
+
+def test_supplier_response_sla_early_expansion_and_real_analytics():
+    login = client.post("/api/seller/login", json={"login": "cement@test.local", "password": "TradeAITest123"}).json()
+    headers = {"Authorization": "Bearer " + login["access_token"]}
+    me = client.get("/api/seller/me", headers=headers).json()
+    sid = me["seller"]["id"]
+
+    s = new_buyer()
+    rfq = full_rfq(s)
+    rid = rfq["id"]
+    client.post("/api/otp/send", json={"session_id": s, "phone": "+919955550021"})
+    client.post("/api/otp/verify", json={"session_id": s, "code": "1234"})
+    assert client.post(f"/api/rfqs/{rid}/matches/release?batch=1").status_code == 200
+    assert client.post(f"/api/rfqs/{rid}/matches/release?batch=2").status_code == 200
+
+    from sqlalchemy import select, update
+    from main import engine, matches, suppliers, utcnow
+    with engine.begin() as db:
+        mine = db.execute(select(matches).where(matches.c.rfq_id == rid, matches.c.supplier_id == sid)).first()
+        assert mine is not None
+        db.execute(update(matches).where(matches.c.rfq_id == rid, matches.c.supplier_id != sid).values(status="declined", response_at=utcnow()))
+
+    declined = client.patch(f"/api/seller/rfqs/{rid}/opportunity", headers=headers, json={
+        "action": "decline", "reason": "Capacity unavailable for requested timeline"
+    })
+    assert declined.status_code == 200
+    assert declined.json()["match_status"] == "declined"
+    assert declined.json()["routing_expanded"] is True
+
+    all_matches = client.get(f"/api/rfqs/{rid}/matches").json()
+    assert any(x["batch"] == 3 for x in all_matches)
+
+    analytics = client.get("/api/seller/analytics", headers=headers)
+    assert analytics.status_code == 200
+    data = analytics.json()
+    assert data["opportunities"] >= 1
+    assert data["declined"] >= 1
+    assert data["response_rate"] > 0
+    assert data["response_score"] is not None
+    assert data["platform_spend"] is None
+    assert data["roi"] is None
+    assert data["roi_status"] == "billing_not_connected"
+
+
+def test_supplier_accept_records_first_response_once():
+    login = client.post("/api/seller/login", json={"login": "cement@test.local", "password": "TradeAITest123"}).json()
+    headers = {"Authorization": "Bearer " + login["access_token"]}
+    sid = client.get("/api/seller/me", headers=headers).json()["seller"]["id"]
+    s = new_buyer()
+    rfq = full_rfq(s)
+    rid = rfq["id"]
+    client.post("/api/otp/send", json={"session_id": s, "phone": "+919955550022"})
+    client.post("/api/otp/verify", json={"session_id": s, "code": "1234"})
+    client.post(f"/api/rfqs/{rid}/matches/release?batch=1")
+    client.post(f"/api/rfqs/{rid}/matches/release?batch=2")
+
+    accepted = client.patch(f"/api/seller/rfqs/{rid}/opportunity", headers=headers, json={"action": "accept"})
+    assert accepted.status_code == 200 and accepted.json()["match_status"] == "accepted"
+
+    from sqlalchemy import select
+    from main import engine, matches
+    with engine.connect() as db:
+        first = db.execute(select(matches.c.response_at).where(matches.c.rfq_id == rid, matches.c.supplier_id == sid)).scalar_one()
+    accepted2 = client.patch(f"/api/seller/rfqs/{rid}/opportunity", headers=headers, json={"action": "accept"})
+    assert accepted2.status_code == 200
+    with engine.connect() as db:
+        second = db.execute(select(matches.c.response_at).where(matches.c.rfq_id == rid, matches.c.supplier_id == sid)).scalar_one()
+    assert first == second
