@@ -1,5 +1,5 @@
 from __future__ import annotations
-import hashlib, hmac, json, os, re, secrets, uuid
+import asyncio, hashlib, hmac, json, os, re, secrets, uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -128,6 +128,19 @@ def init_db():
 init_db()
 app=FastAPI(title="TradeAI API",version="1.6.0")
 app.add_middleware(CORSMiddleware,allow_origins=[x.strip() for x in os.getenv("TRADEAI_CORS_ORIGINS","https://tradeai-pgvr.onrender.com,http://localhost:8000,http://127.0.0.1:8000").split(",") if x.strip()],allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
+
+async def routing_background_loop():
+    await asyncio.sleep(20)
+    while True:
+        try:
+            with engine.begin() as c: run_auto_expansion(c)
+        except Exception:
+            pass
+        await asyncio.sleep(60)
+
+@app.on_event("startup")
+async def start_routing_background_loop():
+    asyncio.create_task(routing_background_loop())
 
 class SessionIn(BaseModel): company:str|None=None
 class RFQIn(BaseModel):
@@ -592,8 +605,9 @@ def internal_auto_expand(x_routing_token:str|None=Header(default=None)):
 
 @app.get("/api/rfqs/{rid}/matches")
 def list_matches(rid:str):
-    with engine.connect() as c:
-        get_rfq(c,rid); q=select(matches,suppliers.c.name.label("supplier_name"),suppliers.c.verification,suppliers.c.trade_score).join(suppliers,suppliers.c.id==matches.c.supplier_id).where(matches.c.rfq_id==rid).order_by(matches.c.batch,matches.c.match_score.desc())
+    with engine.begin() as c:
+        get_rfq(c,rid); run_auto_expansion(c)
+        q=select(matches,suppliers.c.name.label("supplier_name"),suppliers.c.verification,suppliers.c.trade_score).join(suppliers,suppliers.c.id==matches.c.supplier_id).where(matches.c.rfq_id==rid).order_by(matches.c.batch,matches.c.match_score.desc())
         return [rowdict(x) for x in c.execute(q).all()]
 
 @app.get("/api/seller/opportunities")
