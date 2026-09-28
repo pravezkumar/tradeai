@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy import (
     Boolean, Column, DateTime, Float, Integer, MetaData, String, Table, Text,
-    UniqueConstraint, create_engine, delete, func, insert, or_, select, update
+    UniqueConstraint, and_, create_engine, delete, func, insert, or_, select, update
 )
 from sqlalchemy.engine import Engine
 
