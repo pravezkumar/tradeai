@@ -61,6 +61,16 @@ quotes=Table("quotes",md,Column("id",String(40),primary_key=True),Column("rfq_id
     Column("tax_percent",Float,nullable=False,default=0),Column("freight",Float,nullable=False,default=0),Column("delivery_days",Integer,nullable=False),
     Column("warranty_months",Integer,nullable=False,default=0),Column("payment_terms",String(240)),Column("validity_days",Integer,nullable=False,default=7),
     Column("notes",Text),Column("created_at",DateTime(timezone=True),nullable=False))
+deal_rooms=Table("deal_rooms",md,Column("id",String(40),primary_key=True),Column("rfq_id",String(40),nullable=False,index=True),
+    Column("quote_id",String(40),nullable=False,index=True),Column("supplier_id",String(40),nullable=False,index=True),Column("buyer_session_id",String(40),nullable=False,index=True),
+    Column("status",String(40),nullable=False,default="negotiation"),Column("contact_consent",Boolean,nullable=False,default=False),
+    Column("created_at",DateTime(timezone=True),nullable=False),Column("updated_at",DateTime(timezone=True),nullable=False),UniqueConstraint("quote_id","buyer_session_id",name="uq_deal_quote_buyer"))
+deal_messages=Table("deal_messages",md,Column("id",String(40),primary_key=True),Column("deal_id",String(40),nullable=False,index=True),
+    Column("sender_role",String(20),nullable=False),Column("sender_id",String(40),nullable=False),Column("message",Text,nullable=False),Column("created_at",DateTime(timezone=True),nullable=False))
+orders=Table("orders",md,Column("id",String(40),primary_key=True),Column("deal_id",String(40),nullable=False,unique=True,index=True),
+    Column("rfq_id",String(40),nullable=False,index=True),Column("quote_id",String(40),nullable=False),Column("supplier_id",String(40),nullable=False,index=True),
+    Column("buyer_session_id",String(40),nullable=False,index=True),Column("amount",Float,nullable=False),Column("status",String(40),nullable=False),
+    Column("created_at",DateTime(timezone=True),nullable=False),Column("updated_at",DateTime(timezone=True),nullable=False))
 
 def utcnow(): return datetime.now(timezone.utc)
 def as_utc(dt):
@@ -84,7 +94,7 @@ def init_db():
             c.execute(insert(suppliers),seed)
 
 init_db()
-app=FastAPI(title="TradeAI API",version="1.3.0")
+app=FastAPI(title="TradeAI API",version="1.4.0")
 app.add_middleware(CORSMiddleware,allow_origins=[x.strip() for x in os.getenv("TRADEAI_CORS_ORIGINS","https://tradeai-pgvr.onrender.com,http://localhost:8000,http://127.0.0.1:8000").split(",") if x.strip()],allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
 
 class SessionIn(BaseModel): company:str|None=None
@@ -105,6 +115,12 @@ class QuoteIn(BaseModel):
     supplier_id:str; unit_price:float=Field(gt=0); quantity:float=Field(default=1,gt=0); tax_percent:float=Field(default=0,ge=0,le=100); freight:float=Field(default=0,ge=0); delivery_days:int=Field(gt=0); warranty_months:int=Field(default=0,ge=0); payment_terms:str|None=None; validity_days:int=Field(default=7,gt=0); notes:str|None=None
 class SellerQuoteIn(BaseModel):
     unit_price:float=Field(gt=0); quantity:float=Field(default=1,gt=0); tax_percent:float=Field(default=0,ge=0,le=100); freight:float=Field(default=0,ge=0); delivery_days:int=Field(gt=0); warranty_months:int=Field(default=0,ge=0); payment_terms:str|None=None; validity_days:int=Field(default=7,gt=0); notes:str|None=None
+class BuyerDealStartIn(BaseModel): session_id:str; quote_id:str; message:str|None=Field(default=None,max_length=2000)
+class BuyerDealMessageIn(BaseModel): session_id:str; message:str=Field(min_length=1,max_length=2000)
+class SellerDealMessageIn(BaseModel): message:str=Field(min_length=1,max_length=2000)
+class ContactConsentIn(BaseModel): session_id:str; approved:bool
+class BuyerOrderIn(BaseModel): session_id:str; confirm_terms:bool=True
+class OrderStatusIn(BaseModel): status:str=Field(min_length=3,max_length=40)
 
 def get_rfq(c,rid):
     x=c.execute(select(rfqs).where(rfqs.c.id==rid)).first()
@@ -173,7 +189,7 @@ def sync_registered_supplier(c,sid):
     return vals
 
 @app.get("/")
-def root(): return {"service":"TradeAI API","status":"ok","version":"1.3.0"}
+def root(): return {"service":"TradeAI API","status":"ok","version":"1.4.0"}
 @app.get("/api/health")
 def health():
     with engine.connect() as c: c.execute(select(1)).scalar_one()
@@ -349,6 +365,138 @@ def legacy_quote_endpoint(rid:str):
 def legacy_compare_endpoint(rid:str):
     raise HTTPException(410,"Use the buyer-session quotation comparison endpoint")
 
+def deal_messages_list(c,did):
+    return [rowdict(x) for x in c.execute(select(deal_messages).where(deal_messages.c.deal_id==did).order_by(deal_messages.c.created_at)).all()]
+
+def buyer_deal(c,did,session_id):
+    d=rowdict(c.execute(select(deal_rooms).where(deal_rooms.c.id==did)).first())
+    if not d: raise HTTPException(404,"Deal room not found")
+    if d["buyer_session_id"]!=session_id: raise HTTPException(403,"Deal room does not belong to this buyer session")
+    return d
+
+def seller_deal(c,did,sid):
+    d=rowdict(c.execute(select(deal_rooms).where(deal_rooms.c.id==did)).first())
+    if not d: raise HTTPException(404,"Deal room not found")
+    if d["supplier_id"]!=sid: raise HTTPException(403,"Deal room is not assigned to this supplier")
+    return d
+
+def deal_payload(c,d,include_buyer_contact=False):
+    q=rowdict(c.execute(select(quotes).where(quotes.c.id==d["quote_id"])).first())
+    r=get_rfq(c,d["rfq_id"])
+    s=rowdict(c.execute(select(suppliers).where(suppliers.c.id==d["supplier_id"])).first())
+    order=rowdict(c.execute(select(orders).where(orders.c.deal_id==d["id"])).first())
+    buyer_phone=None
+    if include_buyer_contact and d["contact_consent"]:
+        buyer_phone=c.execute(select(buyer_sessions.c.phone).where(buyer_sessions.c.id==d["buyer_session_id"])).scalar()
+    return {"deal":d,"rfq":{"id":r["id"],"requirement":r["requirement"],"location":r["location"],"quantity":r["quantity"],"timeline":r["timeline"]},
+        "quote":q,"supplier":{"id":s["id"],"name":s["name"],"verification":s["verification"]} if s else None,
+        "messages":deal_messages_list(c,d["id"]),"buyer_contact":buyer_phone,"order":order}
+
+@app.post("/api/buyer/rfqs/{rid}/deal-room",status_code=201)
+def start_deal(rid:str,p:BuyerDealStartIn):
+    with engine.begin() as c:
+        r=get_rfq(c,rid)
+        if r["session_id"]!=p.session_id: raise HTTPException(403,"RFQ does not belong to this buyer session")
+        q=rowdict(c.execute(select(quotes).where(quotes.c.id==p.quote_id,quotes.c.rfq_id==rid)).first())
+        if not q: raise HTTPException(404,"Quotation not found for this RFQ")
+        existing=c.execute(select(deal_rooms).where(deal_rooms.c.quote_id==p.quote_id,deal_rooms.c.buyer_session_id==p.session_id)).first()
+        if existing: return deal_payload(c,rowdict(existing))
+        did="deal-"+uuid.uuid4().hex[:14]; now=utcnow()
+        c.execute(insert(deal_rooms).values(id=did,rfq_id=rid,quote_id=p.quote_id,supplier_id=q["supplier_id"],buyer_session_id=p.session_id,status="negotiation",contact_consent=False,created_at=now,updated_at=now))
+        if p.message and p.message.strip():
+            c.execute(insert(deal_messages).values(id="msg-"+uuid.uuid4().hex[:14],deal_id=did,sender_role="buyer",sender_id=p.session_id,message=p.message.strip(),created_at=now))
+        c.execute(update(matches).where(matches.c.rfq_id==rid,matches.c.supplier_id==q["supplier_id"]).values(status="negotiation"))
+        return deal_payload(c,rowdict(c.execute(select(deal_rooms).where(deal_rooms.c.id==did)).first()))
+
+@app.get("/api/buyer/deals/{did}")
+def get_buyer_deal(did:str,session_id:str):
+    with engine.connect() as c:
+        d=buyer_deal(c,did,session_id); return deal_payload(c,d)
+
+@app.post("/api/buyer/deals/{did}/messages",status_code=201)
+def buyer_message(did:str,p:BuyerDealMessageIn):
+    with engine.begin() as c:
+        d=buyer_deal(c,did,p.session_id)
+        if d["status"]=="closed": raise HTTPException(409,"Deal room is closed")
+        mid="msg-"+uuid.uuid4().hex[:14]; now=utcnow()
+        c.execute(insert(deal_messages).values(id=mid,deal_id=did,sender_role="buyer",sender_id=p.session_id,message=p.message.strip(),created_at=now))
+        c.execute(update(deal_rooms).where(deal_rooms.c.id==did).values(updated_at=now))
+        return {"message_id":mid,"sent":True}
+
+@app.put("/api/buyer/deals/{did}/contact-consent")
+def buyer_contact_consent(did:str,p:ContactConsentIn):
+    with engine.begin() as c:
+        buyer_deal(c,did,p.session_id); now=utcnow()
+        c.execute(update(deal_rooms).where(deal_rooms.c.id==did).values(contact_consent=p.approved,updated_at=now))
+        return {"deal_id":did,"contact_consent":p.approved,"buyer_contact_shared":p.approved}
+
+@app.post("/api/buyer/deals/{did}/orders",status_code=201)
+def create_order(did:str,p:BuyerOrderIn):
+    if not p.confirm_terms: raise HTTPException(400,"Buyer must confirm quotation terms")
+    with engine.begin() as c:
+        d=buyer_deal(c,did,p.session_id)
+        existing=c.execute(select(orders).where(orders.c.deal_id==did)).first()
+        if existing: return rowdict(existing)
+        q=rowdict(c.execute(select(quotes).where(quotes.c.id==d["quote_id"])).first())
+        amount=round(q["unit_price"]*q["quantity"]*(1+q["tax_percent"]/100)+q["freight"],2)
+        oid="ord-"+uuid.uuid4().hex[:14]; now=utcnow()
+        c.execute(insert(orders).values(id=oid,deal_id=did,rfq_id=d["rfq_id"],quote_id=d["quote_id"],supplier_id=d["supplier_id"],buyer_session_id=p.session_id,amount=amount,status="confirmed",created_at=now,updated_at=now))
+        c.execute(update(deal_rooms).where(deal_rooms.c.id==did).values(status="ordered",updated_at=now))
+        c.execute(update(matches).where(matches.c.rfq_id==d["rfq_id"],matches.c.supplier_id==d["supplier_id"]).values(status="won"))
+        c.execute(update(rfqs).where(rfqs.c.id==d["rfq_id"]).values(status="order_confirmed",updated_at=now))
+        return rowdict(c.execute(select(orders).where(orders.c.id==oid)).first())
+
+@app.get("/api/buyer/orders")
+def buyer_orders(session_id:str):
+    with engine.connect() as c:
+        q=select(orders,suppliers.c.name.label("supplier_name"),rfqs.c.requirement).join(suppliers,suppliers.c.id==orders.c.supplier_id).join(rfqs,rfqs.c.id==orders.c.rfq_id).where(orders.c.buyer_session_id==session_id).order_by(orders.c.created_at.desc())
+        return [rowdict(x) for x in c.execute(q).all()]
+
+@app.get("/api/seller/deals")
+def seller_deals(authorization:str|None=Header(default=None)):
+    with engine.connect() as c:
+        sid=auth_seller(c,authorization)
+        q=select(deal_rooms,rfqs.c.requirement,rfqs.c.location,quotes.c.unit_price,quotes.c.quantity,quotes.c.tax_percent,quotes.c.freight).join(rfqs,rfqs.c.id==deal_rooms.c.rfq_id).join(quotes,quotes.c.id==deal_rooms.c.quote_id).where(deal_rooms.c.supplier_id==sid).order_by(deal_rooms.c.updated_at.desc())
+        out=[]
+        for x in c.execute(q).all():
+            d=rowdict(x); d["landed_price"]=round(d["unit_price"]*d["quantity"]*(1+d["tax_percent"]/100)+d["freight"],2); out.append(d)
+        return out
+
+@app.get("/api/seller/deals/{did}")
+def get_seller_deal(did:str,authorization:str|None=Header(default=None)):
+    with engine.connect() as c:
+        sid=auth_seller(c,authorization); d=seller_deal(c,did,sid); return deal_payload(c,d,include_buyer_contact=True)
+
+@app.post("/api/seller/deals/{did}/messages",status_code=201)
+def seller_message(did:str,p:SellerDealMessageIn,authorization:str|None=Header(default=None)):
+    with engine.begin() as c:
+        sid=auth_seller(c,authorization); d=seller_deal(c,did,sid)
+        if d["status"]=="closed": raise HTTPException(409,"Deal room is closed")
+        mid="msg-"+uuid.uuid4().hex[:14]; now=utcnow()
+        c.execute(insert(deal_messages).values(id=mid,deal_id=did,sender_role="seller",sender_id=sid,message=p.message.strip(),created_at=now))
+        c.execute(update(deal_rooms).where(deal_rooms.c.id==did).values(updated_at=now))
+        return {"message_id":mid,"sent":True}
+
+@app.get("/api/seller/orders")
+def seller_orders(authorization:str|None=Header(default=None)):
+    with engine.connect() as c:
+        sid=auth_seller(c,authorization)
+        q=select(orders,rfqs.c.requirement,rfqs.c.location).join(rfqs,rfqs.c.id==orders.c.rfq_id).where(orders.c.supplier_id==sid).order_by(orders.c.created_at.desc())
+        return [rowdict(x) for x in c.execute(q).all()]
+
+@app.patch("/api/seller/orders/{oid}/status")
+def seller_order_status(oid:str,p:OrderStatusIn,authorization:str|None=Header(default=None)):
+    allowed={"confirmed","in_progress","ready","dispatched","completed","cancelled"}
+    status=p.status.strip().lower()
+    if status not in allowed: raise HTTPException(400,"Invalid order status")
+    with engine.begin() as c:
+        sid=auth_seller(c,authorization)
+        o=rowdict(c.execute(select(orders).where(orders.c.id==oid)).first())
+        if not o: raise HTTPException(404,"Order not found")
+        if o["supplier_id"]!=sid: raise HTTPException(403,"Order is not assigned to this supplier")
+        c.execute(update(orders).where(orders.c.id==oid).values(status=status,updated_at=utcnow()))
+        return {"order_id":oid,"status":status}
+
 @app.get("/api/admin/sellers")
 def admin_sellers(x_admin_token:str|None=Header(default=None)):
     require_admin(x_admin_token)
@@ -374,4 +522,4 @@ def admin_verify_seller(sid:str,p:SellerVerificationIn,x_admin_token:str|None=He
 @app.get("/api/admin/overview")
 def admin():
     with engine.connect() as c:
-        return {"buyer_sessions":c.execute(select(func.count()).select_from(buyer_sessions)).scalar_one(),"seller_accounts":c.execute(select(func.count()).select_from(seller_accounts)).scalar_one(),"rfqs":c.execute(select(func.count()).select_from(rfqs)).scalar_one(),"qualified_rfqs":c.execute(select(func.count()).select_from(rfqs).where(rfqs.c.intent_score>=THRESHOLD)).scalar_one(),"released_matches":c.execute(select(func.count()).select_from(matches)).scalar_one(),"quotes":c.execute(select(func.count()).select_from(quotes)).scalar_one(),"controls":{"qualification_threshold":THRESHOLD,"first_batch":3,"next_batch":2,"buyer_contact_protected":True}}
+        return {"buyer_sessions":c.execute(select(func.count()).select_from(buyer_sessions)).scalar_one(),"seller_accounts":c.execute(select(func.count()).select_from(seller_accounts)).scalar_one(),"rfqs":c.execute(select(func.count()).select_from(rfqs)).scalar_one(),"qualified_rfqs":c.execute(select(func.count()).select_from(rfqs).where(rfqs.c.intent_score>=THRESHOLD)).scalar_one(),"released_matches":c.execute(select(func.count()).select_from(matches)).scalar_one(),"quotes":c.execute(select(func.count()).select_from(quotes)).scalar_one(),"deal_rooms":c.execute(select(func.count()).select_from(deal_rooms)).scalar_one(),"orders":c.execute(select(func.count()).select_from(orders)).scalar_one(),"controls":{"qualification_threshold":THRESHOLD,"first_batch":3,"next_batch":2,"buyer_contact_protected":True}}
