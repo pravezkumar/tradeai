@@ -52,7 +52,10 @@ def test_buyer_qualification_otp_top3_quote_flow():
     rid = rfq["id"]
 
     send = client.post("/api/otp/send", json={"session_id": s, "phone": "+919999999999"}).json()
-    assert send["dev_otp"] == "123456"\n    assert send["channel"] == "development"\n    events = client.get(f"/api/notifications/{s}").json()\n    assert any(x["kind"] == "buyer_otp" for x in events)
+    assert send["dev_otp"] == "123456"
+    assert send["channel"] == "development"
+    events = client.get(f"/api/notifications/{s}").json()
+    assert any(x["kind"] == "buyer_otp" for x in events)
 
     verify = client.post("/api/otp/verify", json={"session_id": s, "code": "123456"})
     assert verify.status_code == 200 and verify.json()["verified"] is True
