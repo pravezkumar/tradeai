@@ -61,21 +61,11 @@ def test_buyer_qualification_otp_top3_quote_flow():
     matches = client.post(f"/api/rfqs/{rid}/matches/release?batch=1").json()["matches"]
     assert len(matches) == 3
 
-    q = client.post(f"/api/rfqs/{rid}/quotes", json={
-        "supplier_id": matches[0]["supplier_id"],
-        "unit_price": 350,
-        "quantity": 500,
-        "tax_percent": 18,
-        "freight": 5000,
-        "delivery_days": 3,
-        "warranty_months": 0,
-        "payment_terms": "50% advance",
-        "validity_days": 7,
-    })
-    assert q.status_code == 201 and q.json()["landed_price"] > 0
+    blocked = client.post(f"/api/rfqs/{rid}/quotes")
+    assert blocked.status_code == 410
 
-    comp = client.get(f"/api/rfqs/{rid}/quotes/compare").json()
-    assert len(comp["quotes"]) == 1
+    comp = client.get(f"/api/buyer/rfqs/{rid}/quotes/compare?session_id={s}").json()
+    assert len(comp["quotes"]) == 0
 
 
 def test_seller_account_login_and_profile():
