@@ -62,6 +62,9 @@ quotes=Table("quotes",md,Column("id",String(40),primary_key=True),Column("rfq_id
     Column("notes",Text),Column("created_at",DateTime(timezone=True),nullable=False))
 
 def utcnow(): return datetime.now(timezone.utc)
+def as_utc(dt):
+    if dt is None: return None
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
 def rowdict(x): return dict(x._mapping) if x else None
 def jload(v): 
     try:return json.loads(v or "[]")
@@ -138,7 +141,7 @@ def auth_seller(c,authorization):
     if not authorization or not authorization.lower().startswith("bearer "): raise HTTPException(401,"Seller login required")
     token=authorization.split(" ",1)[1].strip()
     x=c.execute(select(seller_sessions).where(seller_sessions.c.token==token)).first()
-    if not x or rowdict(x)["expires_at"]<utcnow(): raise HTTPException(401,"Seller session expired or invalid")
+    if not x or as_utc(rowdict(x)["expires_at"])<utcnow(): raise HTTPException(401,"Seller session expired or invalid")
     return rowdict(x)["seller_id"]
 def supplier_score(r,s):
     cat=(r.get("category") or r["requirement"]).lower(); loc=(r.get("location") or "").lower(); cats=jload(s["categories"]); locs=" ".join(jload(s["locations"])).lower(); n=0
@@ -200,7 +203,7 @@ def otp_verify(p:OTPVerify):
         x=rowdict(x)
         if x["attempts"]>=5: raise HTTPException(429,"Too many OTP attempts")
         c.execute(update(otp_codes).where(otp_codes.c.session_id==p.session_id).values(attempts=x["attempts"]+1))
-        if x["expires_at"]<utcnow(): raise HTTPException(410,"OTP expired")
+        if as_utc(x["expires_at"])<utcnow(): raise HTTPException(410,"OTP expired")
         if not secrets.compare_digest(x["code"],p.code): raise HTTPException(400,"Invalid OTP")
         c.execute(update(buyer_sessions).where(buyer_sessions.c.id==p.session_id).values(verified=True))
         ids=c.execute(select(rfqs.c.id).where(rfqs.c.session_id==p.session_id)).scalars().all(); scored=[rescore(c,r) for r in ids]
