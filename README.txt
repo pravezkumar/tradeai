@@ -1,14 +1,38 @@
-TRADEAI / B2B AI TRADE NETWORK — FRONTEND v0.4
+TRADEAI — AI-QUALIFIED B2B TRADE NETWORK
 
-STATUS
-- Frontend only.
-- Single-file deployment: index.html contains CSS + JavaScript.
-- No API keys required.
-- No backend/database required.
-- Demo OTP: 123456.
+CURRENT STATUS
+- Complete interactive frontend is deployed on Render.
+- Frontend is a self-contained index.html with embedded CSS + JavaScript.
+- Phase-1 FastAPI backend foundation is now in /backend.
+- Backend is not connected to the public frontend yet.
+- No production API keys are committed to GitHub.
 
-RENDER UPDATE
-Replace the existing repository index.html with this v0.4 index.html and commit.
-Render auto-deploy will update the same public URL.
+PHASE-1 BACKEND INCLUDED
+- Anonymous buyer sessions; no compulsory buyer registration.
+- Progressive RFQ qualification.
+- Explainable Purchase Intent Score 0–100.
+- Research / Needs More Information / Qualified / Hot states.
+- OTP-ready verification flow; development OTP 123456.
+- Controlled supplier matching: first 3 suppliers, then 2 per later batch.
+- Seller opportunity feed.
+- Structured quotations and landed-price calculation.
+- Objective quote comparison.
+- Admin overview and basic risk flags.
+- SQLite persistence for development; PostgreSQL is the intended production database.
 
-The assets folder is optional in v0.4 because all required CSS/JS is embedded in index.html.
+LOCAL BACKEND
+cd backend
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+uvicorn main:app --reload --port 8001
+
+TESTS
+cd backend
+pytest -q
+
+PUBLIC FRONTEND
+https://tradeai-pgvr.onrender.com
+
+NEXT PRODUCTION MILESTONE
+Deploy the backend with persistent PostgreSQL, then connect the frontend to live API endpoints. After that, replace development OTP with WhatsApp delivery and add production AI extraction/qualification.
