@@ -379,3 +379,54 @@ def test_otp_contract_is_four_digit_sms():
     assert data["channel"] == "development"
     invalid = client.post("/api/otp/verify", json={"session_id": s, "code": "123456"})
     assert invalid.status_code == 422
+
+
+def test_returning_buyer_passwordless_recovery():
+    from sqlalchemy import select
+    from main import engine, buyer_recovery_tokens
+    phone = "+919811112233"
+    s = new_buyer()
+    rfq = full_rfq(s)
+    sent = client.post("/api/otp/send", json={"session_id": s, "phone": phone}).json()
+    assert client.post("/api/otp/verify", json={"session_id": s, "code": sent["dev_otp"]}).status_code == 200
+
+    start = client.post("/api/buyer/recovery/start", json={"phone": phone})
+    assert start.status_code == 200
+    challenge = start.json()
+    assert len(challenge["dev_otp"]) == 4
+
+    wrong = client.post("/api/buyer/recovery/verify", json={"challenge_id": challenge["challenge_id"], "code": "9999"})
+    if challenge["dev_otp"] != "9999":
+        assert wrong.status_code == 400
+
+    verified = client.post("/api/buyer/recovery/verify", json={"challenge_id": challenge["challenge_id"], "code": challenge["dev_otp"]})
+    assert verified.status_code == 200
+    token = verified.json()["access_token"]
+    assert verified.json()["workspace_count"] >= 1
+
+    workspace = client.get("/api/buyer/recovery/workspace", headers={"Authorization": "Bearer " + token})
+    assert workspace.status_code == 200
+    data = workspace.json()
+    item = next(x for x in data["rfqs"] if x["rfq_id"] == rfq["id"])
+    assert item["session_id"] == s
+    assert data["phone_masked"].endswith("2233")
+    assert data["summary"]["rfqs"] >= 1
+
+    with engine.connect() as db:
+        stored = db.execute(select(buyer_recovery_tokens.c.token_hash).where(buyer_recovery_tokens.c.phone == "919811112233")).scalar_one()
+    assert stored != token and len(stored) == 64
+
+    logged_out = client.delete("/api/buyer/recovery/session", headers={"Authorization": "Bearer " + token})
+    assert logged_out.status_code == 200
+    assert client.get("/api/buyer/recovery/workspace", headers={"Authorization": "Bearer " + token}).status_code == 401
+
+
+def test_recovery_does_not_reveal_unknown_phone_before_verification():
+    start = client.post("/api/buyer/recovery/start", json={"phone": "+919822223344"})
+    assert start.status_code == 200
+    body = start.json()
+    assert "workspace_count" not in body and "exists" not in body
+    verified = client.post("/api/buyer/recovery/verify", json={"challenge_id": body["challenge_id"], "code": body["dev_otp"]})
+    assert verified.status_code == 200 and verified.json()["workspace_count"] == 0
+    workspace = client.get("/api/buyer/recovery/workspace", headers={"Authorization": "Bearer " + verified.json()["access_token"]})
+    assert workspace.status_code == 200 and workspace.json()["rfqs"] == []
