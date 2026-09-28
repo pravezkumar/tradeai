@@ -4,6 +4,7 @@ from pathlib import Path
 TEST_DB = Path(__file__).with_name("test_tradeai.db").resolve()
 os.environ["DATABASE_URL"] = "sqlite:///" + TEST_DB.as_posix()
 os.environ["TRADEAI_ENV"] = "development"
+os.environ["TRADEAI_ADMIN_TOKEN"] = "test-admin-token"
 if TEST_DB.exists():
     TEST_DB.unlink()
 
@@ -115,3 +116,48 @@ def test_low_information_stays_research():
     rfq = client.post("/api/rfqs", json={"session_id": s, "requirement": "cement please"}).json()
     assert rfq["status"] in ("research", "needs_more_information")
     assert len(rfq["next_questions"]) > 0
+
+
+def test_verified_registered_seller_receives_real_opportunity():
+    create = client.post("/api/seller/accounts", json={
+        "full_name": "Cement Seller",
+        "business_name": "Roorkee Cement Supply",
+        "mobile": "+919812345679",
+        "email": "cement@test.local",
+        "seller_type": "Distributor / Wholesaler",
+        "category": "cement",
+        "password": "TradeAITest123",
+    })
+    assert create.status_code == 201
+    sid = create.json()["seller"]["id"]
+
+    login = client.post("/api/seller/login", json={"login": "cement@test.local", "password": "TradeAITest123"}).json()
+    headers = {"Authorization": "Bearer " + login["access_token"]}
+    saved = client.put("/api/seller/profile", headers=headers, json={
+        "gstin": "05ABCDE1234F1Z6",
+        "capabilities": ["cement", "bulk supply", "gst invoice"],
+        "service_locations": ["Roorkee", "Uttarakhand"],
+        "capacity": "5000 bags/month",
+        "moq": "50 bags",
+    })
+    assert saved.status_code == 200 and saved.json()["matching_eligible"] is False
+
+    verified = client.put(
+        f"/api/admin/sellers/{sid}/verification",
+        headers={"X-Admin-Token": "test-admin-token"},
+        json={"verification_level": "Trade Verified"},
+    )
+    assert verified.status_code == 200 and verified.json()["matching_eligible"] is True
+
+    s = new_buyer()
+    rfq = full_rfq(s)
+    client.post("/api/otp/send", json={"session_id": s, "phone": "+919999999997"})
+    client.post("/api/otp/verify", json={"session_id": s, "code": "123456"})
+    first = client.post(f"/api/rfqs/{rfq['id']}/matches/release?batch=1").json()["matches"]
+    second = client.post(f"/api/rfqs/{rfq['id']}/matches/release?batch=2").json()["matches"]
+    released_ids = [x["supplier_id"] for x in first + second]
+    assert sid in released_ids
+
+    opps = client.get("/api/seller/opportunities", headers=headers)
+    assert opps.status_code == 200
+    assert any(x["rfq_id"] == rfq["id"] for x in opps.json())
