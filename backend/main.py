@@ -21,6 +21,7 @@ DEV_OTP=os.getenv("TRADEAI_DEV_OTP","123456")
 ENV=os.getenv("TRADEAI_ENV","development")
 OTP_TTL=int(os.getenv("TRADEAI_OTP_TTL_MINUTES","10"))
 THRESHOLD=int(os.getenv("TRADEAI_QUALIFIED_THRESHOLD","60"))
+ADMIN_TOKEN=os.getenv("TRADEAI_ADMIN_TOKEN","")
 engine:Engine=create_engine(DATABASE_URL,pool_pre_ping=True)
 md=MetaData()
 
@@ -83,7 +84,7 @@ def init_db():
             c.execute(insert(suppliers),seed)
 
 init_db()
-app=FastAPI(title="TradeAI API",version="1.1.0")
+app=FastAPI(title="TradeAI API",version="1.2.0")
 app.add_middleware(CORSMiddleware,allow_origins=[x.strip() for x in os.getenv("TRADEAI_CORS_ORIGINS","https://tradeai-pgvr.onrender.com,http://localhost:8000,http://127.0.0.1:8000").split(",") if x.strip()],allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
 
 class SessionIn(BaseModel): company:str|None=None
@@ -96,6 +97,7 @@ class OTPVerify(BaseModel): session_id:str; code:str=Field(min_length=4,max_leng
 class SellerAccountIn(BaseModel):
     full_name:str=Field(min_length=2,max_length=100); business_name:str=Field(min_length=2,max_length=160); mobile:str=Field(min_length=8,max_length=20); email:str=Field(min_length=5,max_length=160); seller_type:str=Field(min_length=2,max_length=80); category:str=Field(min_length=2,max_length=120); password:str=Field(min_length=8,max_length=200)
 class SellerLoginIn(BaseModel): login:str=Field(min_length=5,max_length=160); password:str=Field(min_length=8,max_length=200)
+class SellerVerificationIn(BaseModel): verification_level:str=Field(min_length=5,max_length=40)
 class SellerProfileIn(BaseModel):
     gstin:str|None=None; udyam:str|None=None; year_established:str|None=None; team_size:str|None=None; description:str|None=None
     capabilities:list[str]=[]; service_locations:list[str]=[]; capacity:str|None=None; moq:str|None=None
@@ -144,15 +146,32 @@ def auth_seller(c,authorization):
     if not x or as_utc(rowdict(x)["expires_at"])<utcnow(): raise HTTPException(401,"Seller session expired or invalid")
     return rowdict(x)["seller_id"]
 def supplier_score(r,s):
-    cat=(r.get("category") or r["requirement"]).lower(); loc=(r.get("location") or "").lower(); cats=jload(s["categories"]); locs=" ".join(jload(s["locations"])).lower(); n=0
+    cat=(r.get("category") or r["requirement"]).lower(); loc=(r.get("location") or "").lower(); cats=[str(x).lower() for x in jload(s["categories"])]; locs=" ".join(jload(s["locations"])).lower(); n=0
     if any(x in cat or cat in x for x in cats): n+=45
     elif any(x in " ".join(cats) for x in cat.split() if len(x)>3): n+=25
     if loc and any(x in locs for x in loc.split() if len(x)>2): n+=25
     elif "india" in locs: n+=12
     return min(100,n+round(s["trade_score"]*.18)+round(s["response_score"]*.12))
 
+VERIFICATION_LEVELS={"Identity Pending":45,"Identity Verified":60,"Business Verified":82,"Trade Verified":95}
+def require_admin(x_admin_token):
+    if not ADMIN_TOKEN: raise HTTPException(503,"Admin verification is not configured")
+    if not x_admin_token or not secrets.compare_digest(x_admin_token,ADMIN_TOKEN): raise HTTPException(401,"Admin authorization required")
+def sync_registered_supplier(c,sid):
+    a=rowdict(c.execute(select(seller_accounts).where(seller_accounts.c.id==sid)).first())
+    p=rowdict(c.execute(select(seller_profiles).where(seller_profiles.c.seller_id==sid)).first())
+    if not a or not p: return None
+    caps=jload(p["capabilities"]); locs=jload(p["service_locations"])
+    categories=list(dict.fromkeys([a["category"]]+caps))
+    verification=p["verification_level"] or "Identity Pending"
+    trade=VERIFICATION_LEVELS.get(verification,45)
+    vals=dict(name=a["business_name"],categories=json.dumps(categories),locations=json.dumps(locs),verification=verification,trade_score=trade,response_score=70,moq=p["moq"] or "Varies",capabilities=json.dumps(caps))
+    if c.execute(select(suppliers.c.id).where(suppliers.c.id==sid)).first(): c.execute(update(suppliers).where(suppliers.c.id==sid).values(**vals))
+    else: c.execute(insert(suppliers).values(id=sid,**vals))
+    return vals
+
 @app.get("/")
-def root(): return {"service":"TradeAI API","status":"ok","version":"1.1.0"}
+def root(): return {"service":"TradeAI API","status":"ok","version":"1.2.0"}
 @app.get("/api/health")
 def health():
     with engine.connect() as c: c.execute(select(1)).scalar_one()
@@ -243,7 +262,8 @@ def seller_profile(p:SellerProfileIn,authorization:str|None=Header(default=None)
         sid=auth_seller(c,authorization); vals=p.model_dump(); vals["capabilities"]=json.dumps(vals["capabilities"]); vals["service_locations"]=json.dumps(vals["service_locations"]); vals["updated_at"]=utcnow()
         c.execute(update(seller_profiles).where(seller_profiles.c.seller_id==sid).values(**vals))
         c.execute(update(seller_accounts).where(seller_accounts.c.id==sid).values(status="verification_pending"))
-        return {"saved":True,"status":"verification_pending"}
+        sync_registered_supplier(c,sid)
+        return {"saved":True,"status":"verification_pending","matching_eligible":False}
 
 @app.post("/api/rfqs/{rid}/matches/release")
 def release(rid:str,batch:int=1):
@@ -254,7 +274,7 @@ def release(rid:str,batch:int=1):
         if not verified: raise HTTPException(409,"Buyer OTP verification required before supplier release")
         if r["intent_score"]<THRESHOLD: raise HTTPException(409,f"RFQ intent score must be at least {THRESHOLD}")
         used=set(c.execute(select(matches.c.supplier_id).where(matches.c.rfq_id==rid)).scalars().all())
-        allsup=[rowdict(x) for x in c.execute(select(suppliers)).all() if rowdict(x)["id"] not in used]
+        allsup=[rowdict(x) for x in c.execute(select(suppliers).where(suppliers.c.verification!="Identity Pending")).all() if rowdict(x)["id"] not in used]
         ranked=sorted([(supplier_score(r,s),s) for s in allsup],key=lambda x:x[0],reverse=True)[:3 if batch==1 else 2]; out=[]
         for score,s in ranked:
             mid="mat-"+uuid.uuid4().hex[:12]; c.execute(insert(matches).values(id=mid,rfq_id=rid,supplier_id=s["id"],batch=batch,match_score=score,status="released",released_at=utcnow())); out.append({"match_id":mid,"supplier_id":s["id"],"supplier_name":s["name"],"match_score":score,"verification":s["verification"],"trade_score":s["trade_score"]})
@@ -264,6 +284,13 @@ def release(rid:str,batch:int=1):
 def list_matches(rid:str):
     with engine.connect() as c:
         get_rfq(c,rid); q=select(matches,suppliers.c.name.label("supplier_name"),suppliers.c.verification,suppliers.c.trade_score).join(suppliers,suppliers.c.id==matches.c.supplier_id).where(matches.c.rfq_id==rid).order_by(matches.c.batch,matches.c.match_score.desc())
+        return [rowdict(x) for x in c.execute(q).all()]
+
+@app.get("/api/seller/opportunities")
+def seller_opportunities(authorization:str|None=Header(default=None)):
+    with engine.connect() as c:
+        sid=auth_seller(c,authorization)
+        q=select(rfqs.c.id.label("rfq_id"),rfqs.c.requirement,rfqs.c.category,rfqs.c.quantity,rfqs.c.location,rfqs.c.timeline,rfqs.c.intent_score,rfqs.c.status,matches.c.match_score,matches.c.batch,matches.c.status.label("match_status"),matches.c.released_at).join(matches,matches.c.rfq_id==rfqs.c.id).where(matches.c.supplier_id==sid).order_by(matches.c.released_at.desc())
         return [rowdict(x) for x in c.execute(q).all()]
 
 @app.get("/api/sellers/{sid}/opportunities")
@@ -290,6 +317,28 @@ def compare(rid:str):
             x=rowdict(r); x["landed_price"]=round(x["unit_price"]*x["quantity"]*(1+x["tax_percent"]/100)+x["freight"],2); items.append(x)
         if not items:return {"quotes":[],"objective_highlights":{}}
         return {"quotes":items,"objective_highlights":{"lowest_landed_price_quote_id":min(items,key=lambda x:x["landed_price"])["id"],"fastest_delivery_quote_id":min(items,key=lambda x:x["delivery_days"])["id"],"longest_warranty_quote_id":max(items,key=lambda x:x["warranty_months"])["id"]}}
+
+@app.get("/api/admin/sellers")
+def admin_sellers(x_admin_token:str|None=Header(default=None)):
+    require_admin(x_admin_token)
+    with engine.connect() as c:
+        q=select(seller_accounts.c.id,seller_accounts.c.business_name,seller_accounts.c.email,seller_accounts.c.category,seller_accounts.c.status,seller_profiles.c.verification_level,seller_profiles.c.service_locations).join(seller_profiles,seller_profiles.c.seller_id==seller_accounts.c.id)
+        out=[]
+        for r in c.execute(q).all():
+            x=rowdict(r); x["service_locations"]=jload(x["service_locations"]); out.append(x)
+        return out
+
+@app.put("/api/admin/sellers/{sid}/verification")
+def admin_verify_seller(sid:str,p:SellerVerificationIn,x_admin_token:str|None=Header(default=None)):
+    require_admin(x_admin_token)
+    level=p.verification_level.strip()
+    if level not in VERIFICATION_LEVELS or level=="Identity Pending": raise HTTPException(400,"Use Identity Verified, Business Verified, or Trade Verified")
+    with engine.begin() as c:
+        if not c.execute(select(seller_accounts.c.id).where(seller_accounts.c.id==sid)).first(): raise HTTPException(404,"Seller not found")
+        c.execute(update(seller_profiles).where(seller_profiles.c.seller_id==sid).values(verification_level=level,updated_at=utcnow()))
+        c.execute(update(seller_accounts).where(seller_accounts.c.id==sid).values(status="active"))
+        sync_registered_supplier(c,sid)
+        return {"seller_id":sid,"verification_level":level,"status":"active","matching_eligible":True}
 
 @app.get("/api/admin/overview")
 def admin():
