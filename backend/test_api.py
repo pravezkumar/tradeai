@@ -161,3 +161,26 @@ def test_verified_registered_seller_receives_real_opportunity():
     opps = client.get("/api/seller/opportunities", headers=headers)
     assert opps.status_code == 200
     assert any(x["rfq_id"] == rfq["id"] for x in opps.json())
+
+
+def test_authenticated_seller_quote_and_buyer_comparison():
+    login = client.post("/api/seller/login", json={"login": "cement@test.local", "password": "TradeAITest123"}).json()
+    headers = {"Authorization": "Bearer " + login["access_token"]}
+    s = new_buyer()
+    rfq = full_rfq(s)
+    rid = rfq["id"]
+    client.post("/api/otp/send", json={"session_id": s, "phone": "+919999999996"})
+    client.post("/api/otp/verify", json={"session_id": s, "code": "123456"})
+    client.post(f"/api/rfqs/{rid}/matches/release?batch=1")
+    client.post(f"/api/rfqs/{rid}/matches/release?batch=2")
+    sent = client.post(f"/api/seller/rfqs/{rid}/quotes", headers=headers, json={
+        "unit_price": 340, "quantity": 500, "tax_percent": 18, "freight": 2500,
+        "delivery_days": 4, "warranty_months": 6, "payment_terms": "30% advance",
+        "validity_days": 7, "notes": "OPC 53 grade"
+    })
+    assert sent.status_code == 201 and sent.json()["status"] == "sent"
+    mine = client.get("/api/seller/quotes", headers=headers)
+    assert mine.status_code == 200 and any(x["rfq_id"] == rid for x in mine.json())
+    buyer = client.get(f"/api/buyer/rfqs/{rid}/quotes/compare?session_id={s}")
+    assert buyer.status_code == 200
+    assert any(x["supplier_id"] == sent.json()["supplier_id"] for x in buyer.json()["quotes"])
