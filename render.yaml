@@ -42,6 +42,16 @@ services:
         sync: false
       - key: TRADEAI_WA_VERIFY_TOKEN
         sync: false
+      - key: TRADEAI_ADMIN_TOKEN
+        sync: false
+      - key: TRADEAI_ROUTING_TOKEN
+        sync: false
+      - key: TRADEAI_AUTO_EXPAND_MINUTES
+        value: "30"
+      - key: TRADEAI_MIN_RESPONSES
+        value: "2"
+      - key: TRADEAI_MAX_BATCHES
+        value: "3"
 
 databases:
   - name: tradeai-postgres
