@@ -1,0 +1,41 @@
+TRADEAI FRONTEND — RENDER STATIC SITE DEPLOY
+============================================
+
+This package is frontend-only. No API keys, backend, database, OpenAI, or WhatsApp configuration is required.
+
+RECOMMENDED DEPLOYMENT
+1. Create a GitHub/GitLab/Bitbucket repository (example: tradeai-frontend).
+2. Upload/push the CONTENTS of this folder to the repository root.
+3. In Render Dashboard choose: New > Static Site.
+4. Connect the repository and select the main branch.
+5. If Render reads render.yaml via Blueprint, the included config is ready.
+6. For manual Static Site setup use:
+   Build Command: echo "Static frontend - no build required"
+   Publish Directory: .
+7. Create Static Site.
+8. Render will provide a URL similar to https://tradeai-frontend.onrender.com.
+
+NO ENVIRONMENT VARIABLES ARE NEEDED FOR THIS FRONTEND PREVIEW.
+
+FUTURE UPDATES
+Push updated frontend files to the connected branch. With auto-deploy enabled, Render redeploys the site automatically.
+
+WINDOWS POWERSHELL — INITIAL GIT PUSH
+-------------------------------------
+cd "$HOME\Downloads\B2B_Frontend_Render_v0.3"
+git init
+git add .
+git commit -m "Initial TradeAI frontend preview"
+git branch -M main
+git remote add origin YOUR_GITHUB_REPOSITORY_URL
+git push -u origin main
+
+WINDOWS CMD — INITIAL GIT PUSH
+------------------------------
+cd /d "%USERPROFILE%\Downloads\B2B_Frontend_Render_v0.3"
+git init
+git add .
+git commit -m "Initial TradeAI frontend preview"
+git branch -M main
+git remote add origin YOUR_GITHUB_REPOSITORY_URL
+git push -u origin main

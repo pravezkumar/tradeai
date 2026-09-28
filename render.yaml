@@ -1,0 +1,7 @@
+services:
+  - type: web
+    runtime: static
+    name: tradeai-frontend
+    buildCommand: echo "Static frontend - no build required"
+    staticPublishPath: .
+    autoDeployTrigger: commit

@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="description" content="AI-qualified B2B buying opportunities. Frontend prototype." />
+  <title>TradeAI — AI Qualified B2B Trade Network</title>
+  <link rel="stylesheet" href="assets/styles.css" />
+</head>
+<body>
+  <div class="demo-ribbon">FRONTEND PROTOTYPE · NO API / BACKEND CONNECTED</div>
+  <header class="site-header">
+    <div class="container nav-wrap">
+      <a class="brand" href="#home" data-nav="home" aria-label="TradeAI home">
+        <span class="brand-mark">T</span><span>TradeAI</span><small>working name</small>
+      </a>
+      <nav class="main-nav">
+        <a href="#discover" data-nav="discover">Find Suppliers</a>
+        <a href="#buyer" data-nav="buyer">Post Requirement</a>
+        <a href="#seller" data-nav="seller">Sell</a>
+        <a href="#seller-dashboard" data-nav="seller-dashboard">Seller Demo</a>
+      </nav>
+      <div class="nav-actions">
+        <button class="btn btn-ghost small" data-go="seller-dashboard">Seller Login</button>
+        <button class="btn btn-primary small" data-go="buyer">Get Quotes</button>
+        <button class="menu-btn" id="menuBtn" aria-label="Menu">☰</button>
+      </div>
+    </div>
+  </header>
+
+  <main id="app">
+    <!-- HOME -->
+    <section class="view active" data-view="home">
+      <div class="hero container">
+        <div class="hero-copy">
+          <div class="eyebrow"><span class="pulse-dot"></span> AI-qualified B2B opportunities</div>
+          <h1>Tell us what your business <span>needs.</span></h1>
+          <p class="hero-lead">No buyer registration. Describe your requirement in plain language. We qualify it first, then connect you with a small set of relevant suppliers.</p>
+          <div class="hero-box">
+            <div class="ask-label"><span class="ai-spark">✦</span> Ask TradeAI</div>
+            <textarea id="heroRequirement" placeholder="Example: Need 500 bags OPC 53 grade cement delivered to SIDCUL Haridwar by Wednesday"></textarea>
+            <div class="hero-box-foot">
+              <div class="input-tools"><span>🎙 Voice</span><span>📎 PDF / Image</span><span>हिंदी / English</span></div>
+              <button class="btn btn-primary" id="heroStart">Qualify my requirement <span>→</span></button>
+            </div>
+          </div>
+          <div class="trust-strip">
+            <span>✓ No signup to enquire</span><span>✓ Buyer contact protected</span><span>✓ Top suppliers, not call spam</span>
+          </div>
+        </div>
+        <div class="hero-visual">
+          <div class="floating-card intent-card">
+            <div class="mini-label">PURCHASE INTENT</div>
+            <div class="intent-score"><strong>94</strong><span>/100</span><b>HOT</b></div>
+            <div class="score-line"><i style="width:94%"></i></div>
+            <ul class="mini-checks"><li>✓ Quantity confirmed</li><li>✓ Delivery location</li><li>✓ Required this week</li><li>✓ Mobile verified</li></ul>
+          </div>
+          <div class="match-path">
+            <div class="path-node buyer-node"><span>🏭</span><b>Buyer Need</b><small>500 bags OPC 53</small></div>
+            <div class="path-line"><span>AI QUALIFIES</span></div>
+            <div class="path-node ai-node"><span>✦</span><b>TradeAI</b><small>Intent 94/100</small></div>
+            <div class="path-line"><span>TOP MATCHES</span></div>
+            <div class="supplier-stack"><div>AS <b>Agarwal Supply</b><em>96% match</em></div><div>SS <b>Shakti Traders</b><em>92% match</em></div><div>BM <b>Bharat Materials</b><em>89% match</em></div></div>
+          </div>
+        </div>
+      </div>
+
+      <section class="section soft-section">
+        <div class="container">
+          <div class="section-heading centered"><span>BUILT DIFFERENT</span><h2>Fewer calls. Better matches. Clear buying intent.</h2><p>Instead of broadcasting raw enquiries, the system qualifies requirements before suppliers see them.</p></div>
+          <div class="feature-grid">
+            <article class="feature-card"><div class="feature-icon">✦</div><h3>AI Qualification</h3><p>Adaptive questions collect only the missing details needed to understand genuine purchase intent.</p><a href="#buyer" data-nav="buyer">See buyer flow →</a></article>
+            <article class="feature-card"><div class="feature-icon">◎</div><h3>Controlled Matching</h3><p>Start with the top 3 relevant suppliers instead of sending one buyer to dozens of sellers.</p><a href="#discover" data-nav="discover">Explore matching →</a></article>
+            <article class="feature-card"><div class="feature-icon">⌁</div><h3>Protected Contact</h3><p>Suppliers can quote, ask questions or request a call without automatically exposing buyer details.</p><a href="#quotes" data-nav="quotes">View quote flow →</a></article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section container split-story">
+        <div><div class="section-heading"><span>HOW IT WORKS</span><h2>From one sentence to a qualified RFQ.</h2></div><div class="steps"><div><b>01</b><h3>Describe the need</h3><p>No registration form. Start with product, service or project requirement.</p></div><div><b>02</b><h3>AI fills the gaps</h3><p>Quantity, location, timeline and category-specific specifications.</p></div><div><b>03</b><h3>Verify & match</h3><p>OTP verifies the buyer, then the engine ranks relevant suppliers.</p></div><div><b>04</b><h3>Compare quotes</h3><p>Structured price, freight, delivery and terms make comparison easier.</p></div></div></div>
+        <div class="rfq-preview panel"><div class="panel-head"><div><small>QUALIFIED RFQ</small><h3>Industrial Epoxy Flooring</h3></div><span class="status hot">HOT 91</span></div><dl><div><dt>Area</dt><dd>20,000 sq ft</dd></div><div><dt>Location</dt><dd>SIDCUL, Haridwar</dd></div><div><dt>Timeline</dt><dd>Within 14 days</dd></div><div><dt>Floor</dt><dd>Concrete · Heavy industrial</dd></div></dl><div class="verified-row"><span>✓ Mobile verified</span><span>✓ Requirement 96% complete</span></div><button class="btn btn-dark full" data-go="buyer">Try this flow</button></div>
+      </section>
+    </section>
+
+    <!-- BUYER FLOW -->
+    <section class="view" data-view="buyer">
+      <div class="flow-shell container">
+        <div class="flow-top"><button class="back-link" data-go="home">← Back</button><div class="flow-progress"><span id="flowProgressText">Step 1 of 4</span><div><i id="flowProgressBar" style="width:25%"></i></div></div><span class="privacy-chip">🔒 Contact protected</span></div>
+        <div class="flow-grid">
+          <div class="ai-chat panel">
+            <div class="chat-head"><div class="ai-avatar">✦</div><div><h3>TradeAI Buyer Assistant</h3><span><i></i> Demo AI online</span></div></div>
+            <div class="chat-body" id="chatBody"></div>
+            <div class="chat-input" id="chatInputArea"><textarea id="chatInput" placeholder="Describe what you need..."></textarea><button id="chatSend" class="send-btn">↑</button></div>
+          </div>
+          <aside class="qualification panel">
+            <div class="qual-head"><small>LIVE QUALIFICATION</small><span id="intentBand" class="status research">RESEARCH</span></div>
+            <div class="big-score"><strong id="intentScore">0</strong><span>/100</span></div>
+            <div class="score-line large"><i id="intentBar" style="width:0%"></i></div>
+            <div class="qual-list" id="qualList"><div><span>Product / service</span><b>○ Missing</b></div><div><span>Quantity / size</span><b>○ Missing</b></div><div><span>Location</span><b>○ Missing</b></div><div><span>Timeline</span><b>○ Missing</b></div><div><span>Mobile verification</span><b>○ Pending</b></div></div>
+            <div class="privacy-note"><b>Why we qualify first</b><p>Incomplete or research-only enquiries are not forwarded to suppliers.</p></div>
+          </aside>
+        </div>
+      </div>
+    </section>
+
+    <!-- MATCHES -->
+    <section class="view" data-view="matches">
+      <div class="container page-pad">
+        <div class="success-banner"><div class="success-icon">✓</div><div><span>REQUIREMENT QUALIFIED</span><h2>We found 3 strong supplier matches.</h2><p>Your contact remains protected. Suppliers can respond with a quote or request a call.</p></div><div class="score-pill"><strong>91</strong><small>INTENT</small></div></div>
+        <div class="page-title-row"><div><span class="kicker">RFQ #TA-28492</span><h1>Industrial Epoxy Flooring · 20,000 sq ft</h1><p>SIDCUL, Haridwar · Required within 14 days</p></div><button class="btn btn-outline" data-go="quotes">Compare sample quotes</button></div>
+        <div class="supplier-results" id="supplierResults"></div>
+        <div class="batch-note"><b>Why only 3?</b><p>We start with the most relevant suppliers. If they do not respond, the next matching suppliers can be released automatically.</p></div>
+      </div>
+    </section>
+
+    <!-- DISCOVER -->
+    <section class="view" data-view="discover">
+      <div class="container page-pad">
+        <div class="section-heading"><span>BUSINESS DISCOVERY</span><h1>Find suppliers by capability, not just keywords.</h1><p>Static prototype of category + location + verification based discovery.</p></div>
+        <div class="search-bar"><input value="Epoxy flooring contractor" aria-label="Search suppliers"><input value="Haridwar, Uttarakhand" aria-label="Location"><button class="btn btn-primary">Search</button></div>
+        <div class="filter-row"><button>Business Verified</button><button>Trade Verified</button><button>Within 100 km</button><button>4.5+ Trade Score</button><button>Site Visit</button></div>
+        <div class="directory-layout"><aside class="filter-panel panel"><h3>Filters</h3><label>Supplier type<select><option>All suppliers</option><option>Manufacturer</option><option>Service provider</option></select></label><label>Verification<select><option>Business verified</option><option>Trade verified</option></select></label><label>Response time<select><option>Any</option><option>Under 1 hour</option></select></label><label>Location radius<select><option>100 km</option><option>50 km</option><option>25 km</option></select></label></aside><div class="directory-results" id="directoryResults"></div></div>
+      </div>
+    </section>
+
+    <!-- QUOTES -->
+    <section class="view" data-view="quotes">
+      <div class="container page-pad">
+        <div class="page-title-row"><div><span class="kicker">RFQ #TA-28492</span><h1>Compare quotations</h1><p>Objective comparison. The buyer makes the final choice.</p></div><button class="btn btn-outline" data-go="matches">← Supplier matches</button></div>
+        <div class="quote-summary"><div><span>3</span><small>QUOTES RECEIVED</small></div><div><span>₹11.60L</span><small>LOWEST LANDED</small></div><div><span>7 days</span><small>FASTEST DELIVERY</small></div><div><span>5 years</span><small>LONGEST WARRANTY</small></div></div>
+        <div class="quote-table-wrap"><table class="quote-table"><thead><tr><th>Comparison</th><th>Apex Industrial Floors <span>96% match</span></th><th>SurfacePro India <span>92% match</span></th><th>PrimeCoat Systems <span>89% match</span></th></tr></thead><tbody><tr><td>Base price</td><td>₹11,40,000</td><td class="best">₹11,20,000 <em>Lowest</em></td><td>₹11,70,000</td></tr><tr><td>Freight / mobilization</td><td class="best">Included <em>Best</em></td><td>₹40,000</td><td>Included</td></tr><tr><td>Landed price</td><td>₹11,40,000 + GST</td><td>₹11,60,000 + GST</td><td>₹11,70,000 + GST</td></tr><tr><td>Completion</td><td>10 days</td><td>12 days</td><td class="best">7 days <em>Fastest</em></td></tr><tr><td>Warranty</td><td>3 years</td><td>2 years</td><td class="best">5 years <em>Longest</em></td></tr><tr><td>Payment terms</td><td>30 / 60 / 10</td><td>40 / 50 / 10</td><td>30 / 50 / 20</td></tr><tr><td>Trade score</td><td>94 / 100</td><td>91 / 100</td><td>96 / 100</td></tr><tr><td></td><td><button class="btn btn-dark full">View quote</button></td><td><button class="btn btn-dark full">View quote</button></td><td><button class="btn btn-dark full">View quote</button></td></tr></tbody></table></div>
+        <div class="neutral-note">TradeAI highlights factual differences such as price, delivery and warranty. It does not automatically choose a supplier for the buyer.</div>
+      </div>
+    </section>
+
+    <!-- SELLER LANDING -->
+    <section class="view" data-view="seller">
+      <div class="seller-hero container"><div><div class="eyebrow">FOR SUPPLIERS & SERVICE PROVIDERS</div><h1>Spend time on opportunities that look like real business.</h1><p>Build a verified business profile, define what you actually supply, and receive AI-qualified requirements matched to your capabilities.</p><div class="cta-row"><button class="btn btn-primary" data-go="seller-onboarding">Create supplier profile</button><button class="btn btn-outline" data-go="seller-dashboard">View dashboard demo</button></div><div class="seller-points"><span>✓ Qualification reasons</span><span>✓ Match score</span><span>✓ Protected buyer contact</span><span>✓ Structured quotations</span></div></div><div class="seller-preview panel"><div class="op-head"><span class="status hot">HOT 94</span><small>NEW OPPORTUNITY</small></div><h3>500 bags OPC 53 Grade Cement</h3><p>SIDCUL, Haridwar · Required by Wednesday</p><div class="op-stats"><div><b>₹1.9L</b><span>Est. value</span></div><div><b>96%</b><span>Match</span></div><div><b>4 min</b><span>Age</span></div></div><ul class="mini-checks"><li>✓ Mobile verified</li><li>✓ Quantity confirmed</li><li>✓ Delivery location confirmed</li><li>✓ Purchase this week</li></ul><button class="btn btn-dark full" data-go="opportunity">View opportunity</button></div></div>
+      <section class="section soft-section"><div class="container"><div class="section-heading centered"><span>SELLER EXPERIENCE</span><h2>Measure business outcomes, not profile views.</h2></div><div class="metric-demo"><article><span>QUALIFIED OPPORTUNITIES</span><strong>38</strong><small>+12% this month</small></article><article><span>QUOTES SENT</span><strong>21</strong><small>55% quote rate</small></article><article><span>ORDERS WON</span><strong>7</strong><small>₹8.4L verified value</small></article><article><span>PLATFORM ROI</span><strong>18.6×</strong><small>Revenue / spend</small></article></div></div></section>
+    </section>
+
+    <!-- SELLER ONBOARDING -->
+    <section class="view" data-view="seller-onboarding">
+      <div class="container page-pad narrow"><button class="back-link" data-go="seller">← Back to seller</button><div class="section-heading"><span>SUPPLIER ONBOARDING</span><h1>Create your business profile.</h1><p>Frontend preview only. Nothing is submitted.</p></div><div class="onboarding panel"><div class="onboard-steps"><span class="active">1 Business</span><span>2 Capabilities</span><span>3 Locations</span><span>4 Verification</span></div><div class="form-grid"><label>Business name<input value="Apex Industrial Floors Pvt. Ltd."></label><label>Business type<select><option>Service Provider</option><option>Manufacturer</option><option>Distributor</option></select></label><label>GSTIN<input placeholder="Enter GSTIN"></label><label>Udyam number<input placeholder="Optional for demo"></label><label class="wide">What do you supply?<input value="Industrial epoxy flooring, PU flooring, ESD flooring"></label><label>Primary city<input value="Haridwar"></label><label>Service radius<select><option>250 km</option><option>100 km</option><option>Pan India</option></select></label></div><div class="verification-preview"><div><span>✓</span><b>Identity Verified</b><small>Director / authorized user</small></div><div><span>○</span><b>Business Verified</b><small>GST / Udyam / company</small></div><div><span>○</span><b>Trade Verified</b><small>Earned through transactions</small></div></div><button class="btn btn-primary" data-go="seller-dashboard">Continue demo →</button></div></div>
+    </section>
+
+    <!-- SELLER DASHBOARD -->
+    <section class="view dashboard-view" data-view="seller-dashboard">
+      <div class="dashboard-shell">
+        <aside class="dash-side"><a class="brand inverse" href="#home" data-nav="home"><span class="brand-mark">T</span><span>TradeAI</span></a><div class="company-mini"><div>AI</div><span><b>Apex Industrial</b><small>Business Verified</small></span></div><nav><button class="active">▦ Overview</button><button>⚡ Opportunities <em>7</em></button><button>▤ Quotations</button><button>◇ Orders</button><button>◉ Catalogue</button><button>✓ Verification</button><button>⌁ Analytics</button></nav><div class="side-bottom"><button data-go="admin">Admin demo</button><button data-go="home">← Public website</button></div></aside>
+        <div class="dash-main"><header class="dash-head"><div><h2>Good morning, Apex 👋</h2><p>Here is what needs your attention today.</p></div><div class="dash-actions"><button>🔔 <i></i></button><div class="user-dot">AK</div></div></header><div class="dash-content">
+          <div class="metric-grid"><article><span>NEW OPPORTUNITIES</span><strong>7</strong><small class="positive">↑ 3 since yesterday</small></article><article><span>OPEN QUOTATIONS</span><strong>12</strong><small>₹14.8L quoted value</small></article><article><span>ORDERS WON</span><strong>5</strong><small class="positive">₹6.2L this month</small></article><article><span>PLATFORM ROI</span><strong>18.6×</strong><small>₹6.2L / ₹33.3K spend</small></article></div>
+          <div class="dash-grid"><section class="panel opportunities"><div class="panel-title"><div><h3>Qualified opportunities</h3><p>Ranked by purchase intent and your match.</p></div><button>View all</button></div><div id="opportunityList"></div></section><section class="panel performance"><div class="panel-title"><div><h3>This month</h3><p>Opportunity funnel</p></div><select><option>September</option></select></div><div class="funnel"><div><span>Qualified</span><b>38</b><i style="width:100%"></i></div><div><span>Accepted</span><b>29</b><i style="width:76%"></i></div><div><span>Quoted</span><b>21</b><i style="width:55%"></i></div><div><span>Negotiation</span><b>11</b><i style="width:29%"></i></div><div><span>Won</span><b>7</b><i style="width:18%"></i></div></div><div class="conversion"><span>Verified order value</span><strong>₹8.4L</strong><small>18.4% opportunity → order</small></div></section></div>
+          <section class="panel activity"><div class="panel-title"><div><h3>Recent activity</h3><p>Latest buyer and quotation updates.</p></div></div><div class="activity-grid"><div><span class="activity-icon">₹</span><p><b>Surface coating quote viewed</b><small>Buyer viewed your ₹2.8L quotation · 8 min ago</small></p></div><div><span class="activity-icon">☎</span><p><b>Call request accepted</b><small>Buyer approved contact for RFQ TA-28114 · 24 min ago</small></p></div><div><span class="activity-icon">✓</span><p><b>Order marked complete</b><small>Warehouse flooring · ₹1.45L verified · 2 hr ago</small></p></div></div></section>
+        </div></div>
+      </div>
+    </section>
+
+    <!-- OPPORTUNITY -->
+    <section class="view dashboard-view" data-view="opportunity">
+      <div class="container page-pad"><button class="back-link" data-go="seller-dashboard">← Seller dashboard</button><div class="opportunity-layout"><div><div class="opportunity-title"><div><span class="status hot">HOT · 94/100</span><span class="kicker">RFQ #TA-29108 · 4 MIN AGO</span></div><h1>500 bags OPC 53 Grade Cement</h1><p>Delivery to SIDCUL, Haridwar · Required by Wednesday</p></div><section class="panel detail-card"><div class="panel-title"><div><h3>Buyer requirement</h3><p>AI-structured from buyer conversation.</p></div><span class="privacy-chip">🔒 Contact protected</span></div><dl class="detail-grid"><div><dt>Product</dt><dd>OPC 53 Grade Cement</dd></div><div><dt>Quantity</dt><dd>500 bags</dd></div><div><dt>Delivery</dt><dd>SIDCUL, Haridwar</dd></div><div><dt>Required by</dt><dd>Wednesday</dd></div><div><dt>GST invoice</dt><dd>Required</dd></div><div><dt>Preferred brand</dt><dd>Open to equivalent</dd></div></dl></section><section class="panel detail-card"><div class="panel-title"><div><h3>Why this is a Hot Lead</h3><p>Explainable qualification signals.</p></div></div><div class="signal-grid"><span>✓ Mobile OTP verified</span><span>✓ Exact quantity</span><span>✓ Delivery location</span><span>✓ Purchase within 3 days</span><span>✓ GST invoice required</span><span>✓ Consistent answers</span></div></section></div><aside><section class="panel match-card"><small>YOUR MATCH SCORE</small><div class="match-score">96<span>%</span></div><div class="score-line"><i style="width:96%"></i></div><ul><li><span>Category capability</span><b>100%</b></li><li><span>Delivery geography</span><b>100%</b></li><li><span>Trade performance</span><b>94%</b></li><li><span>Response reliability</span><b>91%</b></li></ul></section><section class="panel action-card"><h3>Respond to buyer</h3><button class="btn btn-primary full" id="quoteDemoBtn">Send structured quote</button><button class="btn btn-outline full">Ask a question</button><button class="btn btn-outline full">Request buyer call</button><p>Buyer phone is shared only after consent.</p></section></aside></div></div>
+    </section>
+
+    <!-- ADMIN -->
+    <section class="view dashboard-view" data-view="admin">
+      <div class="container page-pad"><button class="back-link" data-go="seller-dashboard">← Seller dashboard</button><div class="page-title-row"><div><span class="kicker">INTERNAL PREVIEW</span><h1>Admin & fraud control</h1><p>Mock moderation queue for Phase 1.</p></div></div><div class="admin-metrics"><article><span>RFQs TODAY</span><strong>184</strong></article><article><span>QUALIFIED</span><strong>119</strong></article><article><span>BLOCKED / RESEARCH</span><strong>51</strong></article><article><span>MANUAL REVIEW</span><strong>14</strong></article></div><section class="panel admin-table"><div class="panel-title"><div><h3>Review queue</h3><p>Signals that need human attention.</p></div></div><table><thead><tr><th>RFQ</th><th>Requirement</th><th>Score</th><th>Signal</th><th>Status</th></tr></thead><tbody><tr><td>TA-29117</td><td>Need 1 lakh iPhones urgently</td><td>42</td><td>Unusual quantity + new mobile</td><td><span class="status review">REVIEW</span></td></tr><tr><td>TA-29113</td><td>Cement price?</td><td>18</td><td>No quantity/location/timeline</td><td><span class="status research">RESEARCH</span></td></tr><tr><td>TA-29108</td><td>500 bags OPC 53 cement</td><td>94</td><td>All core signals verified</td><td><span class="status hot">HOT</span></td></tr><tr><td>TA-29102</td><td>Packaging pouches 50,000 pcs</td><td>83</td><td>Repeat verified buyer</td><td><span class="status qualified">QUALIFIED</span></td></tr></tbody></table></section></div>
+    </section>
+  </main>
+
+  <footer><div class="container footer-inner"><div><a class="brand" href="#home" data-nav="home"><span class="brand-mark">T</span><span>TradeAI</span></a><p>AI-qualified B2B trade network · Frontend prototype.</p></div><div><b>Prototype</b><a href="#buyer" data-nav="buyer">Buyer flow</a><a href="#seller-dashboard" data-nav="seller-dashboard">Seller dashboard</a><a href="#admin" data-nav="admin">Admin</a></div><div><b>Important</b><span>No live AI</span><span>No real OTP</span><span>No backend connected</span></div></div></footer>
+
+  <div class="toast" id="toast"></div>
+  <div class="modal-backdrop" id="quoteModal"><div class="modal"><button class="modal-x" id="modalClose">×</button><span class="kicker">STRUCTURED QUOTATION</span><h2>Send quote for RFQ #TA-29108</h2><div class="form-grid"><label>Unit price / bag<input value="380"></label><label>Quantity<input value="500"></label><label>GST<select><option>Extra as applicable</option></select></label><label>Freight<input value="Included"></label><label>Delivery<input value="2 days"></label><label>Quote validity<input value="3 days"></label><label class="wide">Payment terms<input value="50% advance, balance before dispatch"></label></div><button class="btn btn-primary full" id="sendQuoteDemo">Send demo quotation</button><small>This is a frontend simulation. No quote is actually sent.</small></div></div>
+
+  <script src="assets/app.js"></script>
+</body>
+</html>
