@@ -24,11 +24,11 @@ OTP_TTL=int(os.getenv("TRADEAI_OTP_TTL_MINUTES","10"))
 THRESHOLD=int(os.getenv("TRADEAI_QUALIFIED_THRESHOLD","60"))
 ADMIN_TOKEN=os.getenv("TRADEAI_ADMIN_TOKEN","")
 OPENAI_API_KEY=os.getenv("OPENAI_API_KEY","").strip()
-AI_MODEL=os.getenv("TRADEAI_OPENAI_MODEL","gpt-5").strip()
+AI_MODEL=os.getenv("TRADEAI_OPENAI_MODEL","gpt-5.6-luna").strip()
 AI_MODE=os.getenv("TRADEAI_AI_MODE","auto").strip().lower()
 META_ACCESS_TOKEN=(os.getenv("TRADEAI_WHATSAPP_ACCESS_TOKEN") or os.getenv("WHATSAPP_ACCESS_TOKEN") or "").strip()
 META_PHONE_NUMBER_ID=(os.getenv("TRADEAI_WHATSAPP_PHONE_NUMBER_ID") or os.getenv("WHATSAPP_PHONE_NUMBER_ID") or "").strip()
-META_GRAPH_VERSION=os.getenv("TRADEAI_META_GRAPH_VERSION","v23.0").strip()
+META_GRAPH_VERSION=os.getenv("TRADEAI_META_GRAPH_VERSION","v25.0").strip()
 WA_OTP_TEMPLATE=os.getenv("TRADEAI_WA_OTP_TEMPLATE","").strip()
 WA_OTP_LANGUAGE=os.getenv("TRADEAI_WA_OTP_LANGUAGE","en_US").strip()
 WA_RFQ_TEMPLATE=os.getenv("TRADEAI_WA_RFQ_TEMPLATE","").strip()
@@ -131,7 +131,7 @@ def init_db():
                 c.execute(insert(system_settings).values(key=key,value=value,updated_at=utcnow()))
 
 init_db()
-app=FastAPI(title="TradeAI API",version="1.7.0")
+app=FastAPI(title="TradeAI API",version="1.8.0")
 app.add_middleware(CORSMiddleware,allow_origins=[x.strip() for x in os.getenv("TRADEAI_CORS_ORIGINS","https://tradeai-pgvr.onrender.com,http://localhost:8000,http://127.0.0.1:8000").split(",") if x.strip()],allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
 
 async def routing_background_loop():
@@ -306,13 +306,18 @@ def sync_registered_supplier(c,sid):
     return vals
 
 @app.get("/")
-def root(): return {"service":"TradeAI API","status":"ok","version":"1.7.0"}
+def root(): return {"service":"TradeAI API","status":"ok","version":"1.8.0"}
 @app.get("/api/health")
 def health():
     with engine.connect() as c: c.execute(select(1)).scalar_one()
+    ai_ready=bool(OPENAI_API_KEY)
+    wa_transport=bool(META_ACCESS_TOKEN and META_PHONE_NUMBER_ID)
+    wa_ready=bool(wa_transport and WA_OTP_TEMPLATE and WA_RFQ_TEMPLATE and WA_VERIFY_TOKEN and META_APP_SECRET)
     return {"ok":True,"database":"postgresql" if DATABASE_URL.startswith("postgresql") else "sqlite","qualification_threshold":THRESHOLD,
-        "ai":{"mode":AI_MODE,"configured":bool(OPENAI_API_KEY),"model":AI_MODEL if OPENAI_API_KEY else None},
-        "whatsapp":{"configured":bool(META_ACCESS_TOKEN and META_PHONE_NUMBER_ID),"otp_template_configured":bool(WA_OTP_TEMPLATE),"rfq_template_configured":bool(WA_RFQ_TEMPLATE)}}
+        "ai":{"mode":AI_MODE,"configured":ai_ready,"model":AI_MODEL if ai_ready else None,"fallback":"rules"},
+        "whatsapp":{"configured":wa_transport,"otp_template_configured":bool(WA_OTP_TEMPLATE),"rfq_template_configured":bool(WA_RFQ_TEMPLATE),
+            "webhook_verify_configured":bool(WA_VERIFY_TOKEN),"webhook_signature_configured":bool(META_APP_SECRET),"graph_version":META_GRAPH_VERSION},
+        "production_readiness":{"ai":ai_ready,"whatsapp":wa_ready,"otp_hashed_at_rest":True,"otp_resend_cooldown_seconds":OTP_COOLDOWN_SECONDS}}
 
 
 AI_FIELDS=("category","quantity","location","timeline","specifications","budget")
@@ -370,8 +375,8 @@ def openai_qualification(p:AIQualificationIn):
         "required":["category","quantity","location","timeline","specifications","budget","next_field","next_question","quick_options","risk_flags"]}
     instructions="""You are TradeAI's Indian B2B procurement qualification engine. Extract only facts the buyer stated or that are unambiguous from context; never invent quantity, budget, location, dates, certifications, stock or specifications. Merge the latest answer with previously captured fields. Ask exactly one useful missing question at a time. Core fields are category/product, quantity/size/capacity, delivery/work location, timeline and important specifications. Budget is optional and should not block OTP. Adapt the specification question to the category. Keep questions concise and use the buyer's apparent language (English or Hinglish). Flag obvious spam, contradictory or research-only text, but do not over-flag normal short answers. When all core fields are captured, next_field and next_question must be null."""
     user={"requirement":p.requirement,"previous_fields":p.answers,"latest_message":p.latest_message,"conversation":p.conversation[-12:]}
-    payload={"model":AI_MODEL,"store":False,"instructions":instructions,"input":json.dumps(user,ensure_ascii=False),
-        "text":{"format":{"type":"json_schema","name":"tradeai_qualification","strict":True,"schema":schema}}}
+    payload={"model":AI_MODEL,"store":False,"instructions":instructions,"input":json.dumps(user,ensure_ascii=False),"max_output_tokens":900,
+        "text":{"verbosity":"low","format":{"type":"json_schema","name":"tradeai_qualification","strict":True,"schema":schema}}}
     with httpx.Client(timeout=25) as client:
         r=client.post("https://api.openai.com/v1/responses",headers={"Authorization":"Bearer "+OPENAI_API_KEY,"Content-Type":"application/json"},json=payload)
         r.raise_for_status(); data=json.loads(extract_response_text(r.json()))
@@ -398,6 +403,28 @@ def normalize_phone(phone):
     digits=re.sub(r"\D","",phone or "")
     if len(digits)==10:digits="91"+digits
     return digits
+
+def otp_digest(session_id,code):
+    return hmac.new(OTP_SECRET.encode(),f"{session_id}:{code}".encode(),hashlib.sha256).hexdigest()
+
+def redact_sensitive(value,secrets_to_hide=()):
+    if value is None:return None
+    hidden={str(x) for x in secrets_to_hide if x is not None and str(x)}
+    def walk(v):
+        if isinstance(v,dict):return {k:walk(x) for k,x in v.items()}
+        if isinstance(v,list):return [walk(x) for x in v]
+        if isinstance(v,str):
+            out=v
+            for secret in hidden:out=out.replace(secret,"[REDACTED]")
+            return out
+        return v
+    return walk(value)
+
+def verify_meta_signature(raw_body:bytes,signature:str|None):
+    if not META_APP_SECRET:return ENV!="production"
+    if not signature or not signature.startswith("sha256="):return False
+    expected="sha256="+hmac.new(META_APP_SECRET.encode(),raw_body,hashlib.sha256).hexdigest()
+    return secrets.compare_digest(expected,signature)
 
 def record_notification(c,kind,recipient,status,session_id=None,rfq_id=None,supplier_id=None,provider_message_id=None,error=None,payload=None):
     nid="ntf-"+uuid.uuid4().hex[:14]; now=utcnow()
@@ -426,7 +453,9 @@ def whatsapp_template(to,template,language,components):
 def send_otp_whatsapp(phone,code):
     components=[{"type":"body","parameters":[{"type":"text","text":code}]},
         {"type":"button","sub_type":"url","index":"0","parameters":[{"type":"text","text":code}]}]
-    return whatsapp_template(phone,WA_OTP_TEMPLATE,WA_OTP_LANGUAGE,components)
+    result=whatsapp_template(phone,WA_OTP_TEMPLATE,WA_OTP_LANGUAGE,components)
+    if result.get("payload"):result["payload"]=redact_sensitive(result["payload"],[code])
+    return result
 
 def notify_supplier_rfq(c,supplier_id,rfq):
     a=rowdict(c.execute(select(seller_accounts).where(seller_accounts.c.id==supplier_id)).first())
@@ -444,8 +473,12 @@ def whatsapp_verify(request:Request):
     raise HTTPException(403,"Webhook verification failed")
 
 @app.post("/api/webhooks/whatsapp")
-async def whatsapp_webhook(request:Request):
-    body=await request.json(); updated=0
+async def whatsapp_webhook(request:Request,x_hub_signature_256:str|None=Header(default=None)):
+    raw=await request.body()
+    if not verify_meta_signature(raw,x_hub_signature_256):raise HTTPException(401,"Invalid WhatsApp webhook signature")
+    try:body=json.loads(raw)
+    except Exception:raise HTTPException(400,"Invalid webhook payload")
+    updated=0
     with engine.begin() as c:
         for entry in body.get("entry",[]):
             for change in entry.get("changes",[]):
@@ -497,14 +530,20 @@ def otp_send(p:OTPIn):
     code=DEV_OTP if ENV!="production" else str(secrets.randbelow(900000)+100000); exp=utcnow()+timedelta(minutes=OTP_TTL)
     with engine.begin() as c:
         if not c.execute(select(buyer_sessions.c.id).where(buyer_sessions.c.id==p.session_id)).first(): raise HTTPException(404,"Buyer session not found")
+        if OTP_COOLDOWN_SECONDS:
+            last=c.execute(select(notifications.c.created_at).where(notifications.c.session_id==p.session_id,notifications.c.kind=="buyer_otp").order_by(notifications.c.created_at.desc())).scalar()
+            if last:
+                wait=OTP_COOLDOWN_SECONDS-int((utcnow()-as_utc(last)).total_seconds())
+                if wait>0:raise HTTPException(429,f"Please wait {wait} seconds before requesting another OTP")
         c.execute(update(buyer_sessions).where(buyer_sessions.c.id==p.session_id).values(phone=p.phone))
-        c.execute(delete(otp_codes).where(otp_codes.c.session_id==p.session_id)); c.execute(insert(otp_codes).values(session_id=p.session_id,code=code,expires_at=exp,attempts=0))
+        c.execute(delete(otp_codes).where(otp_codes.c.session_id==p.session_id))
+        c.execute(insert(otp_codes).values(session_id=p.session_id,code=otp_digest(p.session_id,code),expires_at=exp,attempts=0))
         delivery=send_otp_whatsapp(p.phone,code)
         status=delivery["status"] if delivery["configured"] else ("development" if ENV!="production" else "not_configured")
         record_notification(c,"buyer_otp",p.phone,status,session_id=p.session_id,provider_message_id=delivery.get("message_id"),error=delivery.get("error"),payload=delivery.get("payload"))
         if ENV=="production" and not delivery["configured"]: raise HTTPException(503,"WhatsApp OTP is not configured")
         if ENV=="production" and delivery["status"]=="failed": raise HTTPException(502,"WhatsApp OTP delivery was rejected by provider")
-    out={"sent":True,"channel":"whatsapp" if delivery["configured"] else "development","delivery_status":status,"expires_in_minutes":OTP_TTL}
+    out={"sent":True,"channel":"whatsapp" if delivery["configured"] else "development","delivery_status":status,"expires_in_minutes":OTP_TTL,"resend_after_seconds":OTP_COOLDOWN_SECONDS}
     if ENV!="production":out["dev_otp"]=code
     return out
 
@@ -517,8 +556,9 @@ def otp_verify(p:OTPVerify):
         if x["attempts"]>=5: raise HTTPException(429,"Too many OTP attempts")
         c.execute(update(otp_codes).where(otp_codes.c.session_id==p.session_id).values(attempts=x["attempts"]+1))
         if as_utc(x["expires_at"])<utcnow(): raise HTTPException(410,"OTP expired")
-        if not secrets.compare_digest(x["code"],p.code): raise HTTPException(400,"Invalid OTP")
+        if not secrets.compare_digest(x["code"],otp_digest(p.session_id,p.code)): raise HTTPException(400,"Invalid OTP")
         c.execute(update(buyer_sessions).where(buyer_sessions.c.id==p.session_id).values(verified=True))
+        c.execute(delete(otp_codes).where(otp_codes.c.session_id==p.session_id))
         ids=c.execute(select(rfqs.c.id).where(rfqs.c.session_id==p.session_id)).scalars().all(); scored=[rescore(c,r) for r in ids]
         return {"verified":True,"rfqs":[{"id":x["id"],"intent_score":x["intent_score"],"status":x["status"]} for x in scored]}
 
