@@ -353,6 +353,7 @@ async function api(path,options={}){
   return body;
 }
 const state = {step:0, requirement:'', answers:{product:'',quantity:'',location:'',timeline:'',spec:''}, verified:false, score:0, buyerSession:null, rfqId:null, apiMatches:[], selectedQuoteId:null, selectedSupplier:null, activeBuyerDealId:null, activeBuyerDeal:null};
+state.buyerSession=localStorage.getItem('tradeai_buyer_session'); state.rfqId=localStorage.getItem('tradeai_rfq_id'); state.activeBuyerDealId=localStorage.getItem('tradeai_deal_id');
 
 const suppliers=[
  {name:'Apex Industrial Floors',initials:'AF',location:'Haridwar · 18 km',match:96,trade:94,response:'12 min',orders:46,badges:['Business Verified','Trade Verified','Site Visit']},
@@ -434,6 +435,16 @@ async function loadSellerDashboard(){
     else toast('Dashboard: '+e.message);
   }
 }
+
+async function openSellerDeal(did){
+  try{
+    activeSellerDealId=did;const d=await api('/api/seller/deals/'+did);$('#sellerDealTitle').textContent='Deal room · '+(d.rfq?.requirement||did);$('#sellerDealRfq').textContent=d.rfq?.id||'—';$('#sellerDealContact').textContent=d.buyer_contact||'Protected';$('#sellerDealOrder').textContent=d.order?(d.order.id+' · '+String(d.order.status).toUpperCase()):'Not confirmed';renderDealMessages(d.messages,'#sellerDealMessages');$('#sellerDealModal').classList.add('show');
+  }catch(e){toast('Deal room: '+e.message)}
+}
+$('#sellerDealClose').onclick=()=>$('#sellerDealModal').classList.remove('show');$('#sellerDealModal').onclick=e=>{if(e.target.id==='sellerDealModal')e.currentTarget.classList.remove('show')};
+$('#sellerDealSend').onclick=async()=>{const v=$('#sellerDealInput').value.trim();if(!v||!activeSellerDealId)return;try{await api('/api/seller/deals/'+activeSellerDealId+'/messages',{method:'POST',body:JSON.stringify({message:v})});$('#sellerDealInput').value='';await openSellerDeal(activeSellerDealId);await loadSellerDashboard()}catch(e){toast('Reply: '+e.message)}};
+window.updateSellerOrder=async(oid,status)=>{if(!status)return;try{await api('/api/seller/orders/'+oid+'/status',{method:'PATCH',body:JSON.stringify({status})});toast('Order status updated');await loadSellerDashboard()}catch(e){toast('Order: '+e.message)}};
+
 window.showToast=toast;
 
 const questions=[
@@ -447,7 +458,7 @@ function addBubble(text,type='ai'){const d=document.createElement('div');d.class
 function setQuick(opts){const old=$('.quick-options');if(old)old.remove();if(!opts?.length)return;const q=document.createElement('div');q.className='quick-options';opts.forEach(x=>{const b=document.createElement('button');b.textContent=x;b.onclick=()=>{$('#chatInput').value=x;sendChat()};q.appendChild(b)});$('#chatBody').appendChild(q)}
 function calcScore(){let s=0;if(state.answers.product)s+=15;if(state.answers.quantity)s+=15;if(state.answers.location)s+=15;if(state.answers.timeline)s+=15;if(state.answers.spec)s+=10;if(state.verified)s+=20;if(Object.values(state.answers).filter(Boolean).length>=4)s+=10;return Math.min(s,100)}
 function updateQualification(){state.score=calcScore();$('#intentScore').textContent=state.score;$('#intentBar').style.width=state.score+'%';let band=state.score>=80?'HOT':state.score>=60?'QUALIFIED':state.score>=40?'MORE INFO':'RESEARCH';const e=$('#intentBand');e.textContent=band;e.className='status '+(band==='HOT'?'hot':band==='QUALIFIED'?'qualified':'research');const labels=[['product','Product / service'],['quantity','Quantity / size'],['location','Location'],['timeline','Timeline']];$('#qualList').innerHTML=labels.map(([k,l])=>`<div><span>${l}</span><b class="${state.answers[k]?'done':''}">${state.answers[k]?'✓ Captured':'○ Missing'}</b></div>`).join('')+`<div><span>Mobile verification</span><b class="${state.verified?'done':''}">${state.verified?'✓ Verified':'○ Pending'}</b></div>`}
-function resetBuyer(seed=true){state.step=0;state.requirement='';state.answers={product:'',quantity:'',location:'',timeline:'',spec:''};state.verified=false;state.buyerSession=null;state.rfqId=null;state.apiMatches=[];$('#chatBody').innerHTML='';$('#chatInputArea').style.display='flex';$('#flowProgressText').textContent='Step 1 of 4';$('#flowProgressBar').style.width='25%';addBubble('Hi — describe what your business needs. You do not need to create an account.');if(seed){const v=$('#heroRequirement').value.trim();if(v){$('#chatInput').value=v;setTimeout(sendChat,250)}}updateQualification()}
+function resetBuyer(seed=true){state.step=0;state.requirement='';state.answers={product:'',quantity:'',location:'',timeline:'',spec:''};state.verified=false;state.buyerSession=null;state.rfqId=null;state.apiMatches=[];state.selectedQuoteId=null;state.selectedSupplier=null;state.activeBuyerDealId=null;state.activeBuyerDeal=null;localStorage.removeItem('tradeai_buyer_session');localStorage.removeItem('tradeai_rfq_id');localStorage.removeItem('tradeai_deal_id');$('#chatBody').innerHTML='';$('#chatInputArea').style.display='flex';$('#flowProgressText').textContent='Step 1 of 4';$('#flowProgressBar').style.width='25%';addBubble('Hi — describe what your business needs. You do not need to create an account.');if(seed){const v=$('#heroRequirement').value.trim();if(v){$('#chatInput').value=v;setTimeout(sendChat,250)}}updateQualification()}
 function inferRequirement(text){const t=text.toLowerCase();if(t.includes('epoxy')) state.answers.product='Industrial epoxy flooring';else if(t.includes('cement')) state.answers.product='OPC 53 grade cement';else if(t.includes('pouch')||t.includes('packag')) state.answers.product='Printed packaging';else state.answers.product=text.length>5?text:'';const qty=text.match(/([\d,]+\s*(?:bags?|kg|mt|tons?|pcs?|pieces?|sq\s*ft|sqm|litres?|l\b))/i);if(qty)state.answers.quantity=qty[1];if(/haridwar|sidcul/i.test(text))state.answers.location='SIDCUL, Haridwar';else if(/roorkee/i.test(text))state.answers.location='Roorkee';else if(/dehradun/i.test(text))state.answers.location='Dehradun';const time=text.match(/(by\s+\w+|within\s+\d+\s+(?:days?|weeks?)|urgent|today|tomorrow|this week)/i);if(time)state.answers.timeline=time[1]}
 function nextMissing(){return questions.find(q=>!state.answers[q.key])}
 function sendChat(){const input=$('#chatInput');const text=input.value.trim();if(!text)return;addBubble(text,'user');input.value='';if(state.step===0){state.requirement=text;inferRequirement(text);state.step=1}else{const q=nextMissing();if(q)state.answers[q.key]=text}updateQualification();setTimeout(()=>{const missing=nextMissing();if(missing){addBubble(missing.q);if(missing.key==='timeline')setQuick(['This week','Within 14 days','Within 30 days']);else if(missing.key==='spec'&&state.answers.product.toLowerCase().includes('epoxy'))setQuick(['3 mm heavy-duty','2 mm standard','Need supplier recommendation']);else setQuick([]);$('#chatInput').placeholder=missing.hint}else{setQuick([]);showOtpStep()}},300)}
@@ -460,7 +471,7 @@ function showOtpStep(){
     $('#sendBuyerOtp').disabled=true; $('#sendBuyerOtp').textContent='Sending…';
     try{
       const s=await api('/api/buyer/sessions',{method:'POST',body:JSON.stringify({})}); state.buyerSession=s.session_id;
-      const r=await api('/api/rfqs',{method:'POST',body:JSON.stringify({session_id:state.buyerSession,requirement:state.requirement||state.answers.product,category:state.answers.product,quantity:state.answers.quantity,location:state.answers.location,timeline:state.answers.timeline,specifications:state.answers.spec})}); state.rfqId=r.id;
+      const r=await api('/api/rfqs',{method:'POST',body:JSON.stringify({session_id:state.buyerSession,requirement:state.requirement||state.answers.product,category:state.answers.product,quantity:state.answers.quantity,location:state.answers.location,timeline:state.answers.timeline,specifications:state.answers.spec})}); state.rfqId=r.id; localStorage.setItem('tradeai_buyer_session',state.buyerSession);localStorage.setItem('tradeai_rfq_id',state.rfqId);
       const sent=await api('/api/otp/send',{method:'POST',body:JSON.stringify({session_id:state.buyerSession,phone})});
       addBubble('OTP sent. Enter the verification code to continue.'); q.innerHTML='<input id="buyerOtpCode" inputmode="numeric" placeholder="OTP code" style="min-width:150px;padding:11px;border:1px solid #dce4e8;border-radius:9px"><button id="verifyBuyerOtp">Verify OTP →</button>';
       if(sent.dev_otp) addBubble('Development verification code: '+sent.dev_otp);
@@ -488,7 +499,7 @@ $('#heroStart').onclick=()=>{if(!$('#heroRequirement').value.trim()){$('#heroReq
 
 
 function bindQuoteChoices(){
-  $('#quoteChoices .choice-pill').forEach(btn=>btn.onclick=()=>{ $('#quoteChoices .choice-pill').forEach(x=>x.classList.remove('active'));btn.classList.add('active');$('#decisionText').textContent=btn.dataset.choice+' is shortlisted';toast(btn.dataset.choice+' shortlisted — contact remains protected'); });
+  $('#quoteChoices .choice-pill').forEach(btn=>btn.onclick=()=>{ $('#quoteChoices .choice-pill').forEach(x=>x.classList.remove('active'));btn.classList.add('active');state.selectedQuoteId=btn.dataset.quote;state.selectedSupplier=btn.dataset.choice;$('#decisionText').textContent=btn.dataset.choice+' is shortlisted';toast(btn.dataset.choice+' shortlisted — contact remains protected'); });
 }
 async function loadBuyerQuotes(){
   try{
@@ -501,10 +512,31 @@ async function loadBuyerQuotes(){
     const head=qs.map(q=>`<th>${esc(q.supplier_name)} <span>${q.match_score}% match</span></th>`).join('');
     const row=(label,fn,kind='')=>`<tr><td>${label}</td>${qs.map(q=>cell(q,fn(q),kind)).join('')}</tr>`;
     $('#quoteCompareContainer').innerHTML=`<table class="quote-table"><thead><tr><th>Comparison</th>${head}</tr></thead><tbody>${row('Base price',q=>money(q.unit_price*q.quantity))}${row('Freight / mobilization',q=>q.freight?money(q.freight):'Included')}${row('Landed price',q=>money(q.landed_price),'landed')}${row('Delivery / completion',q=>q.delivery_days+' days','delivery')}${row('Warranty',q=>q.warranty_months+' months','warranty')}${row('Payment terms',q=>esc(q.payment_terms||'Not specified'))}${row('Trade score',q=>q.trade_score+' / 100')}</tbody></table>`;
-    $('#quoteChoices').innerHTML=qs.map(q=>`<button class="choice-pill" data-choice="${esc(q.supplier_name)}">Shortlist ${esc(q.supplier_name)}</button>`).join(''); bindQuoteChoices(); $('#decisionText').textContent='Choose a quotation to shortlist';
+    $('#quoteChoices').innerHTML=qs.map(q=>`<button class="choice-pill" data-quote="${esc(q.id)}" data-choice="${esc(q.supplier_name)}">Shortlist ${esc(q.supplier_name)}</button>`).join(''); bindQuoteChoices(); $('#decisionText').textContent='Choose a quotation to shortlist'; if(state.activeBuyerDealId) await loadBuyerDeal();
   }catch(e){toast('Quotes: '+e.message)}
 }
-$('#requestNegotiation').onclick=()=>toast('Negotiation workflow is the next transaction milestone');
+function renderDealMessages(items,target){
+  $(target).innerHTML=(items||[]).length?(items||[]).map(m=>`<div class="deal-msg ${m.sender_role==='buyer'?'buyer':'seller'}">${esc(m.message)}<small>${m.sender_role==='buyer'?'Buyer':'Supplier'} · ${new Date(m.created_at).toLocaleString('en-IN')}</small></div>`).join(''):'<div style="font-size:10px;color:var(--muted)">No messages yet.</div>';
+  $(target).scrollTop=$(target).scrollHeight;
+}
+async function startBuyerNegotiation(){
+  if(!state.selectedQuoteId){toast('Shortlist a quotation first');return}
+  try{
+    const data=await api('/api/buyer/rfqs/'+state.rfqId+'/deal-room',{method:'POST',body:JSON.stringify({session_id:state.buyerSession,quote_id:state.selectedQuoteId,message:'I would like to discuss this quotation before confirming the order.'})});
+    state.activeBuyerDealId=data.deal.id;state.activeBuyerDeal=data;localStorage.setItem('tradeai_deal_id',state.activeBuyerDealId);renderBuyerDeal(data);toast('Private negotiation started');
+  }catch(e){toast('Negotiation: '+e.message)}
+}
+function renderBuyerDeal(data){
+  state.activeBuyerDeal=data;$('#buyerDealRoom').style.display='block';$('#buyerDealTitle').textContent='Negotiation with '+(data.supplier?.name||'supplier');renderDealMessages(data.messages,'#buyerDealMessages');
+  const shared=!!data.deal.contact_consent;$('#buyerContactState').textContent=shared?'CONTACT SHARED':'CONTACT PROTECTED';$('#buyerContactState').className='contact-state '+(shared?'shared':'');
+  $('#buyerShareContact').textContent=shared?'Revoke contact sharing':'Share contact with this supplier';
+  if(data.order){$('#buyerOrderState').style.display='block';$('#buyerOrderState').textContent='Order '+data.order.id+' · '+String(data.order.status).toUpperCase()+' · '+money(data.order.amount);$('#buyerConfirmOrder').disabled=true;$('#buyerConfirmOrder').textContent='Order confirmed'}else{$('#buyerOrderState').style.display='none';$('#buyerConfirmOrder').disabled=false;$('#buyerConfirmOrder').textContent='Confirm order on quoted terms'}
+}
+async function loadBuyerDeal(){if(!state.activeBuyerDealId||!state.buyerSession)return;try{renderBuyerDeal(await api('/api/buyer/deals/'+state.activeBuyerDealId+'?session_id='+encodeURIComponent(state.buyerSession)))}catch(e){localStorage.removeItem('tradeai_deal_id');state.activeBuyerDealId=null}}
+$('#requestNegotiation').onclick=startBuyerNegotiation;
+$('#buyerDealSend').onclick=async()=>{const v=$('#buyerDealInput').value.trim();if(!v||!state.activeBuyerDealId)return;try{await api('/api/buyer/deals/'+state.activeBuyerDealId+'/messages',{method:'POST',body:JSON.stringify({session_id:state.buyerSession,message:v})});$('#buyerDealInput').value='';await loadBuyerDeal()}catch(e){toast('Message: '+e.message)}};
+$('#buyerShareContact').onclick=async()=>{if(!state.activeBuyerDealId)return;const approved=!state.activeBuyerDeal?.deal?.contact_consent;try{await api('/api/buyer/deals/'+state.activeBuyerDealId+'/contact-consent',{method:'PUT',body:JSON.stringify({session_id:state.buyerSession,approved})});await loadBuyerDeal();toast(approved?'Contact shared with this supplier only':'Contact sharing revoked')}catch(e){toast('Contact consent: '+e.message)}};
+$('#buyerConfirmOrder').onclick=async()=>{if(!state.activeBuyerDealId)return;const b=$('#buyerConfirmOrder');b.disabled=true;b.textContent='Confirming…';try{const o=await api('/api/buyer/deals/'+state.activeBuyerDealId+'/orders',{method:'POST',body:JSON.stringify({session_id:state.buyerSession,confirm_terms:true})});toast('Order confirmed · '+o.id);await loadBuyerDeal()}catch(e){toast('Order: '+e.message);b.disabled=false;b.textContent='Confirm order on quoted terms'}};
 $('#quoteDemoBtn').onclick=()=>openQuoteBuilder();$('#modalClose').onclick=()=>$('#quoteModal').classList.remove('show');$('#quoteModal').onclick=e=>{if(e.target.id==='quoteModal')e.currentTarget.classList.remove('show')};
 
 
