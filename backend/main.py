@@ -34,6 +34,10 @@ WA_OTP_LANGUAGE=os.getenv("TRADEAI_WA_OTP_LANGUAGE","en_US").strip()
 WA_RFQ_TEMPLATE=os.getenv("TRADEAI_WA_RFQ_TEMPLATE","").strip()
 WA_RFQ_LANGUAGE=os.getenv("TRADEAI_WA_RFQ_LANGUAGE","en_US").strip()
 WA_VERIFY_TOKEN=os.getenv("TRADEAI_WA_VERIFY_TOKEN","").strip()
+ROUTING_TOKEN=os.getenv("TRADEAI_ROUTING_TOKEN","").strip()
+DEFAULT_AUTO_EXPAND_MINUTES=int(os.getenv("TRADEAI_AUTO_EXPAND_MINUTES","30"))
+DEFAULT_MIN_RESPONSES=int(os.getenv("TRADEAI_MIN_RESPONSES","2"))
+DEFAULT_MAX_BATCHES=int(os.getenv("TRADEAI_MAX_BATCHES","3"))
 engine:Engine=create_engine(DATABASE_URL,pool_pre_ping=True)
 md=MetaData()
 
@@ -88,6 +92,12 @@ notifications=Table("notifications",md,Column("id",String(40),primary_key=True),
     Column("rfq_id",String(40),index=True),Column("supplier_id",String(40),index=True),Column("provider_message_id",String(160),index=True),
     Column("status",String(40),nullable=False),Column("error",Text),Column("payload",Text),Column("created_at",DateTime(timezone=True),nullable=False),
     Column("updated_at",DateTime(timezone=True),nullable=False))
+fraud_assessments=Table("fraud_assessments",md,Column("rfq_id",String(40),primary_key=True),Column("fingerprint",String(64),nullable=False,index=True),
+    Column("risk_score",Integer,nullable=False,default=0),Column("flags",Text,nullable=False,default="[]"),Column("decision",String(30),nullable=False,default="clear"),
+    Column("reviewed_by",String(80)),Column("updated_at",DateTime(timezone=True),nullable=False))
+routing_events=Table("routing_events",md,Column("id",String(40),primary_key=True),Column("rfq_id",String(40),nullable=False,index=True),
+    Column("event",String(60),nullable=False,index=True),Column("batch",Integer),Column("details",Text),Column("created_at",DateTime(timezone=True),nullable=False))
+system_settings=Table("system_settings",md,Column("key",String(80),primary_key=True),Column("value",String(240),nullable=False),Column("updated_at",DateTime(timezone=True),nullable=False))
 
 def utcnow(): return datetime.now(timezone.utc)
 def as_utc(dt):
@@ -109,9 +119,14 @@ def init_db():
             dict(id="sup-004",name="NorthStar Enterprises",categories=json.dumps(["electrical","machinery","industrial supplies"]),locations=json.dumps(["uttarakhand","up","haryana"]),verification="Business Verified",trade_score=82,response_score=80,moq="Varies",capabilities=json.dumps(["electrical","machinery","project supply"])),
             dict(id="sup-005",name="GreenField B2B",categories=json.dumps(["food & agri","packaging"]),locations=json.dumps(["india","uttarakhand","up"]),verification="Identity Verified",trade_score=76,response_score=78,moq="Varies",capabilities=json.dumps(["agri sourcing","packaging","distribution"])) ]
             c.execute(insert(suppliers),seed)
+        defaults={"qualification_threshold":str(THRESHOLD),"first_batch":"3","next_batch":"2","auto_expand_minutes":str(DEFAULT_AUTO_EXPAND_MINUTES),
+            "min_responses":str(DEFAULT_MIN_RESPONSES),"max_batches":str(DEFAULT_MAX_BATCHES),"duplicate_screening":"true","auto_expand":"true"}
+        for key,value in defaults.items():
+            if not c.execute(select(system_settings.c.key).where(system_settings.c.key==key)).first():
+                c.execute(insert(system_settings).values(key=key,value=value,updated_at=utcnow()))
 
 init_db()
-app=FastAPI(title="TradeAI API",version="1.5.0")
+app=FastAPI(title="TradeAI API",version="1.6.0")
 app.add_middleware(CORSMiddleware,allow_origins=[x.strip() for x in os.getenv("TRADEAI_CORS_ORIGINS","https://tradeai-pgvr.onrender.com,http://localhost:8000,http://127.0.0.1:8000").split(",") if x.strip()],allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
 
 class SessionIn(BaseModel): company:str|None=None
@@ -141,12 +156,63 @@ class OrderStatusIn(BaseModel): status:str=Field(min_length=3,max_length=40)
 class AIQualificationIn(BaseModel):
     requirement:str=Field(min_length=3,max_length=3000); latest_message:str|None=Field(default=None,max_length=2000)
     answers:dict[str,str|None]={}; conversation:list[dict[str,str]]=[]
+class AdminModerationIn(BaseModel):
+    action:str=Field(min_length=3,max_length=30); note:str|None=Field(default=None,max_length=500)
+class AdminSettingsIn(BaseModel):
+    qualification_threshold:int|None=Field(default=None,ge=40,le=90); first_batch:int|None=Field(default=None,ge=1,le=5)
+    next_batch:int|None=Field(default=None,ge=1,le=5); auto_expand_minutes:int|None=Field(default=None,ge=1,le=1440)
+    min_responses:int|None=Field(default=None,ge=1,le=10); max_batches:int|None=Field(default=None,ge=1,le=10)
+    duplicate_screening:bool|None=None; auto_expand:bool|None=None
 
 
 def get_rfq(c,rid):
     x=c.execute(select(rfqs).where(rfqs.c.id==rid)).first()
     if not x: raise HTTPException(404,"RFQ not found")
     return rowdict(x)
+
+def setting(c,key,default=None):
+    v=c.execute(select(system_settings.c.value).where(system_settings.c.key==key)).scalar()
+    return default if v is None else v
+def int_setting(c,key,default): 
+    try:return int(setting(c,key,default))
+    except:return int(default)
+def bool_setting(c,key,default=True):
+    return str(setting(c,key,str(default).lower())).lower() in ("1","true","yes","on")
+def current_threshold(c): return int_setting(c,"qualification_threshold",THRESHOLD)
+
+def rfq_fingerprint(x):
+    parts=[x.get("requirement"),x.get("category"),x.get("quantity"),x.get("location")]
+    norm="|".join(re.sub(r"[^a-z0-9]+"," ",str(v or "").lower()).strip() for v in parts)
+    return hashlib.sha256(norm.encode()).hexdigest()
+
+def assess_fraud(c,rid,keep_override=True):
+    r=get_rfq(c,rid); fp=rfq_fingerprint(r); flags=[]; risk=0
+    req=(r.get("requirement") or "").lower()
+    if len(req.strip())<12: risk+=20; flags.append("Very short enquiry")
+    if any(v in req for v in ["test test","asdf","free money","click here","http://","https://"]): risk+=65; flags.append("Spam or garbage pattern")
+    sess=rowdict(c.execute(select(buyer_sessions).where(buyer_sessions.c.id==r["session_id"])).first())
+    if bool_setting(c,"duplicate_screening",True):
+        same_session=c.execute(select(func.count()).select_from(rfqs).where(rfqs.c.session_id==r["session_id"],rfqs.c.id!=rid,rfqs.c.created_at>=utcnow()-timedelta(hours=24))).scalar_one()
+        if same_session>=2: risk+=35; flags.append("Repeated RFQs from same buyer session")
+        phone=(sess or {}).get("phone")
+        if phone:
+            other_ids=c.execute(select(rfqs.c.id).join(buyer_sessions,buyer_sessions.c.id==rfqs.c.session_id).where(
+                buyer_sessions.c.phone==phone,rfqs.c.id!=rid,rfqs.c.created_at>=utcnow()-timedelta(hours=24))).scalars().all()
+            same_fp=0
+            for oid in other_ids:
+                other=get_rfq(c,oid)
+                if rfq_fingerprint(other)==fp:same_fp+=1
+            if same_fp: risk+=50; flags.append("Duplicate requirement from same verified mobile")
+            if len(other_ids)>=4: risk+=35; flags.append("High RFQ velocity from verified mobile")
+    risk=min(100,risk)
+    existing=rowdict(c.execute(select(fraud_assessments).where(fraud_assessments.c.rfq_id==rid)).first())
+    override=(existing or {}).get("decision") if keep_override else None
+    if override in ("approved","blocked","research"): decision=override
+    else: decision="blocked" if risk>=80 else "review" if risk>=45 else "clear"
+    vals=dict(fingerprint=fp,risk_score=risk,flags=json.dumps(flags),decision=decision,updated_at=utcnow())
+    if existing:c.execute(update(fraud_assessments).where(fraud_assessments.c.rfq_id==rid).values(**vals))
+    else:c.execute(insert(fraud_assessments).values(rfq_id=rid,reviewed_by=None,**vals))
+    return {"risk_score":risk,"flags":flags,"decision":decision}
 
 def calc_score(x:dict[str,Any],verified:bool):
     score=0; reasons=[]; risks=[]; req=(x.get("requirement") or "").strip()
@@ -165,9 +231,17 @@ def rescore(c,rid):
     x=get_rfq(c,rid)
     verified=bool(c.execute(select(buyer_sessions.c.verified).where(buyer_sessions.c.id==x["session_id"])).scalar_one())
     score,reasons,risks=calc_score(x,verified)
-    status=("hot" if score>=80 else "qualified") if verified and score>=THRESHOLD else "verification_required" if score>=THRESHOLD else "needs_more_information" if score>=40 else "research"
+    threshold=current_threshold(c)
+    status=("hot" if score>=80 else "qualified") if verified and score>=threshold else "verification_required" if score>=threshold else "needs_more_information" if score>=40 else "research"
     c.execute(update(rfqs).where(rfqs.c.id==rid).values(intent_score=score,score_reasons=json.dumps(reasons),risk_flags=json.dumps(risks),status=status,updated_at=utcnow()))
     x.update(intent_score=score,score_reasons=reasons,risk_flags=risks,status=status)
+    fraud=assess_fraud(c,rid)
+    merged=list(dict.fromkeys(risks+fraud["flags"]))
+    if fraud["decision"]=="blocked": status="blocked"
+    elif fraud["decision"]=="review" and verified: status="manual_review"
+    elif fraud["decision"]=="research": status="research"
+    c.execute(update(rfqs).where(rfqs.c.id==rid).values(risk_flags=json.dumps(merged),status=status,updated_at=utcnow()))
+    x.update(risk_flags=merged,status=status,fraud=fraud)
     return x
 
 def password_hash(password,salt_hex=None):
@@ -210,7 +284,7 @@ def sync_registered_supplier(c,sid):
     return vals
 
 @app.get("/")
-def root(): return {"service":"TradeAI API","status":"ok","version":"1.5.0"}
+def root(): return {"service":"TradeAI API","status":"ok","version":"1.6.0"}
 @app.get("/api/health")
 def health():
     with engine.connect() as c: c.execute(select(1)).scalar_one()
@@ -391,7 +465,10 @@ def qualify(rid:str,p:QualificationIn):
 @app.get("/api/rfqs/{rid}")
 def rfq_detail(rid:str):
     with engine.connect() as c:
-        x=get_rfq(c,rid); x["score_reasons"]=jload(x["score_reasons"]); x["risk_flags"]=jload(x["risk_flags"]); x["next_questions"]=missing(x); return x
+        x=get_rfq(c,rid); x["score_reasons"]=jload(x["score_reasons"]); x["risk_flags"]=jload(x["risk_flags"]); x["next_questions"]=missing(x)
+        fa=rowdict(c.execute(select(fraud_assessments).where(fraud_assessments.c.rfq_id==rid)).first())
+        if fa: fa["flags"]=jload(fa["flags"])
+        x["fraud"]=fa; return x
 
 @app.post("/api/otp/send")
 def otp_send(p:OTPIn):
@@ -460,20 +537,58 @@ def seller_profile(p:SellerProfileIn,authorization:str|None=Header(default=None)
         sync_registered_supplier(c,sid)
         return {"saved":True,"status":"verification_pending","matching_eligible":False}
 
+def release_batch(c,rid,batch,source="manual"):
+    if batch<1: raise HTTPException(400,"Batch must be >= 1")
+    r=get_rfq(c,rid)
+    verified=bool(c.execute(select(buyer_sessions.c.verified).where(buyer_sessions.c.id==r["session_id"])).scalar_one())
+    if not verified: raise HTTPException(409,"Buyer OTP verification required before supplier release")
+    threshold=current_threshold(c)
+    if r["intent_score"]<threshold: raise HTTPException(409,f"RFQ intent score must be at least {threshold}")
+    fa=assess_fraud(c,rid)
+    if fa["decision"] in ("blocked","review","research"): raise HTTPException(409,f"RFQ routing held by risk control: {fa['decision']}")
+    used=set(c.execute(select(matches.c.supplier_id).where(matches.c.rfq_id==rid)).scalars().all())
+    allsup=[rowdict(x) for x in c.execute(select(suppliers).where(suppliers.c.verification!="Identity Pending")).all() if rowdict(x)["id"] not in used]
+    limit=int_setting(c,"first_batch",3) if batch==1 else int_setting(c,"next_batch",2)
+    ranked=sorted([(supplier_score(r,s),s) for s in allsup],key=lambda x:x[0],reverse=True)[:limit]; out=[]
+    for score,s in ranked:
+        mid="mat-"+uuid.uuid4().hex[:12]
+        c.execute(insert(matches).values(id=mid,rfq_id=rid,supplier_id=s["id"],batch=batch,match_score=score,status="released",released_at=utcnow()))
+        notify_supplier_rfq(c,s["id"],r)
+        out.append({"match_id":mid,"supplier_id":s["id"],"supplier_name":s["name"],"match_score":score,"verification":s["verification"],"trade_score":s["trade_score"]})
+    c.execute(insert(routing_events).values(id="route-"+uuid.uuid4().hex[:14],rfq_id=rid,event="batch_released",batch=batch,details=json.dumps({"source":source,"released":len(out)}),created_at=utcnow()))
+    return {"rfq_id":rid,"batch":batch,"matches":out,"source":source}
+
 @app.post("/api/rfqs/{rid}/matches/release")
 def release(rid:str,batch:int=1):
-    if batch<1: raise HTTPException(400,"Batch must be >= 1")
-    with engine.begin() as c:
-        r=get_rfq(c,rid)
-        verified=bool(c.execute(select(buyer_sessions.c.verified).where(buyer_sessions.c.id==r["session_id"])).scalar_one())
-        if not verified: raise HTTPException(409,"Buyer OTP verification required before supplier release")
-        if r["intent_score"]<THRESHOLD: raise HTTPException(409,f"RFQ intent score must be at least {THRESHOLD}")
-        used=set(c.execute(select(matches.c.supplier_id).where(matches.c.rfq_id==rid)).scalars().all())
-        allsup=[rowdict(x) for x in c.execute(select(suppliers).where(suppliers.c.verification!="Identity Pending")).all() if rowdict(x)["id"] not in used]
-        ranked=sorted([(supplier_score(r,s),s) for s in allsup],key=lambda x:x[0],reverse=True)[:3 if batch==1 else 2]; out=[]
-        for score,s in ranked:
-            mid="mat-"+uuid.uuid4().hex[:12]; c.execute(insert(matches).values(id=mid,rfq_id=rid,supplier_id=s["id"],batch=batch,match_score=score,status="released",released_at=utcnow())); notify_supplier_rfq(c,s["id"],r); out.append({"match_id":mid,"supplier_id":s["id"],"supplier_name":s["name"],"match_score":score,"verification":s["verification"],"trade_score":s["trade_score"]})
-        return {"rfq_id":rid,"batch":batch,"matches":out}
+    with engine.begin() as c:return release_batch(c,rid,batch,"manual")
+
+
+def run_auto_expansion(c):
+    if not bool_setting(c,"auto_expand",True): return {"enabled":False,"expanded":[],"checked":0}
+    wait_minutes=int_setting(c,"auto_expand_minutes",DEFAULT_AUTO_EXPAND_MINUTES)
+    min_responses=int_setting(c,"min_responses",DEFAULT_MIN_RESPONSES)
+    max_batches=int_setting(c,"max_batches",DEFAULT_MAX_BATCHES)
+    cutoff=utcnow()-timedelta(minutes=wait_minutes); expanded=[]; checked=0
+    ids=c.execute(select(rfqs.c.id).where(rfqs.c.status.in_(["qualified","hot"]))).scalars().all()
+    for rid in ids:
+        latest=c.execute(select(func.max(matches.c.batch),func.max(matches.c.released_at)).where(matches.c.rfq_id==rid)).first()
+        if not latest or latest[0] is None: continue
+        batch=int(latest[0]); released_at=as_utc(latest[1]); checked+=1
+        if batch>=max_batches or not released_at or released_at>cutoff: continue
+        responses=c.execute(select(func.count()).select_from(quotes).where(quotes.c.rfq_id==rid)).scalar_one()
+        if responses>=min_responses: continue
+        try:
+            result=release_batch(c,rid,batch+1,"auto")
+            if result["matches"]: expanded.append({"rfq_id":rid,"batch":batch+1,"released":len(result["matches"]),"responses":responses})
+        except HTTPException:
+            continue
+    return {"enabled":True,"expanded":expanded,"checked":checked,"auto_expand_minutes":wait_minutes,"min_responses":min_responses}
+
+@app.post("/api/internal/routing/auto-expand")
+def internal_auto_expand(x_routing_token:str|None=Header(default=None)):
+    if not ROUTING_TOKEN: raise HTTPException(503,"Routing scheduler token is not configured")
+    if not x_routing_token or not secrets.compare_digest(x_routing_token,ROUTING_TOKEN): raise HTTPException(401,"Routing authorization required")
+    with engine.begin() as c:return run_auto_expansion(c)
 
 @app.get("/api/rfqs/{rid}/matches")
 def list_matches(rid:str):
@@ -686,17 +801,88 @@ def admin_sellers(x_admin_token:str|None=Header(default=None)):
 
 @app.put("/api/admin/sellers/{sid}/verification")
 def admin_verify_seller(sid:str,p:SellerVerificationIn,x_admin_token:str|None=Header(default=None)):
-    require_admin(x_admin_token)
-    level=p.verification_level.strip()
+    require_admin(x_admin_token); level=p.verification_level.strip()
     if level not in VERIFICATION_LEVELS or level=="Identity Pending": raise HTTPException(400,"Use Identity Verified, Business Verified, or Trade Verified")
     with engine.begin() as c:
         if not c.execute(select(seller_accounts.c.id).where(seller_accounts.c.id==sid)).first(): raise HTTPException(404,"Seller not found")
         c.execute(update(seller_profiles).where(seller_profiles.c.seller_id==sid).values(verification_level=level,updated_at=utcnow()))
-        c.execute(update(seller_accounts).where(seller_accounts.c.id==sid).values(status="active"))
-        sync_registered_supplier(c,sid)
+        c.execute(update(seller_accounts).where(seller_accounts.c.id==sid).values(status="active")); sync_registered_supplier(c,sid)
         return {"seller_id":sid,"verification_level":level,"status":"active","matching_eligible":True}
 
-@app.get("/api/admin/overview")
-def admin():
+@app.get("/api/admin/rfqs")
+def admin_rfqs(x_admin_token:str|None=Header(default=None),limit:int=50):
+    require_admin(x_admin_token); limit=max(1,min(limit,200))
     with engine.connect() as c:
-        return {"buyer_sessions":c.execute(select(func.count()).select_from(buyer_sessions)).scalar_one(),"seller_accounts":c.execute(select(func.count()).select_from(seller_accounts)).scalar_one(),"rfqs":c.execute(select(func.count()).select_from(rfqs)).scalar_one(),"qualified_rfqs":c.execute(select(func.count()).select_from(rfqs).where(rfqs.c.intent_score>=THRESHOLD)).scalar_one(),"released_matches":c.execute(select(func.count()).select_from(matches)).scalar_one(),"quotes":c.execute(select(func.count()).select_from(quotes)).scalar_one(),"deal_rooms":c.execute(select(func.count()).select_from(deal_rooms)).scalar_one(),"orders":c.execute(select(func.count()).select_from(orders)).scalar_one(),"notifications":c.execute(select(func.count()).select_from(notifications)).scalar_one(),"controls":{"qualification_threshold":THRESHOLD,"first_batch":3,"next_batch":2,"buyer_contact_protected":True}}
+        q=select(rfqs,fraud_assessments.c.risk_score,fraud_assessments.c.decision,fraud_assessments.c.flags.label("fraud_flags")).outerjoin(fraud_assessments,fraud_assessments.c.rfq_id==rfqs.c.id).order_by(rfqs.c.created_at.desc()).limit(limit)
+        out=[]
+        for row in c.execute(q).all():
+            x=rowdict(row); x["score_reasons"]=jload(x["score_reasons"]); x["risk_flags"]=jload(x["risk_flags"]); x["fraud_flags"]=jload(x.get("fraud_flags")); out.append(x)
+        return out
+
+@app.put("/api/admin/rfqs/{rid}/moderation")
+def admin_moderate_rfq(rid:str,p:AdminModerationIn,x_admin_token:str|None=Header(default=None)):
+    require_admin(x_admin_token); action=p.action.strip().lower()
+    if action not in ("approve","block","research","reassess"): raise HTTPException(400,"Action must be approve, block, research, or reassess")
+    with engine.begin() as c:
+        get_rfq(c,rid); assess_fraud(c,rid,keep_override=False)
+        decision={"approve":"approved","block":"blocked","research":"research","reassess":"clear"}[action]
+        c.execute(update(fraud_assessments).where(fraud_assessments.c.rfq_id==rid).values(decision=decision,reviewed_by="admin",updated_at=utcnow()))
+        out=rescore(c,rid)
+        if action=="approve":
+            verified=bool(c.execute(select(buyer_sessions.c.verified).where(buyer_sessions.c.id==out["session_id"])).scalar_one())
+            status=("hot" if out["intent_score"]>=80 else "qualified") if verified and out["intent_score"]>=current_threshold(c) else out["status"]
+            c.execute(update(rfqs).where(rfqs.c.id==rid).values(status=status,updated_at=utcnow())); out["status"]=status
+        elif action=="block":
+            c.execute(update(rfqs).where(rfqs.c.id==rid).values(status="blocked",updated_at=utcnow())); out["status"]="blocked"
+        elif action=="research":
+            c.execute(update(rfqs).where(rfqs.c.id==rid).values(status="research",updated_at=utcnow())); out["status"]="research"
+        c.execute(insert(routing_events).values(id="route-"+uuid.uuid4().hex[:14],rfq_id=rid,event="admin_"+action,batch=None,details=json.dumps({"note":p.note}),created_at=utcnow()))
+        return {"rfq_id":rid,"action":action,"status":out["status"],"fraud_decision":decision}
+
+@app.get("/api/admin/settings")
+def admin_settings(x_admin_token:str|None=Header(default=None)):
+    require_admin(x_admin_token)
+    with engine.connect() as c:return {r.key:r.value for r in c.execute(select(system_settings)).all()}
+
+@app.put("/api/admin/settings")
+def admin_update_settings(p:AdminSettingsIn,x_admin_token:str|None=Header(default=None)):
+    require_admin(x_admin_token); vals={k:v for k,v in p.model_dump().items() if v is not None}
+    with engine.begin() as c:
+        for key,value in vals.items():
+            v=str(value).lower() if isinstance(value,bool) else str(value)
+            if c.execute(select(system_settings.c.key).where(system_settings.c.key==key)).first(): c.execute(update(system_settings).where(system_settings.c.key==key).values(value=v,updated_at=utcnow()))
+            else:c.execute(insert(system_settings).values(key=key,value=v,updated_at=utcnow()))
+        return {"saved":True,"settings":{r.key:r.value for r in c.execute(select(system_settings)).all()}}
+
+@app.post("/api/admin/routing/run")
+def admin_run_routing(x_admin_token:str|None=Header(default=None)):
+    require_admin(x_admin_token)
+    with engine.begin() as c:return run_auto_expansion(c)
+
+@app.get("/api/admin/routing")
+def admin_routing(x_admin_token:str|None=Header(default=None),limit:int=50):
+    require_admin(x_admin_token)
+    with engine.connect() as c:
+        q=select(routing_events).order_by(routing_events.c.created_at.desc()).limit(max(1,min(limit,200)))
+        return [rowdict(x) for x in c.execute(q).all()]
+
+@app.get("/api/admin/overview")
+def admin(x_admin_token:str|None=Header(default=None)):
+    require_admin(x_admin_token)
+    with engine.connect() as c:
+        threshold=current_threshold(c)
+        return {"buyer_sessions":c.execute(select(func.count()).select_from(buyer_sessions)).scalar_one(),
+            "seller_accounts":c.execute(select(func.count()).select_from(seller_accounts)).scalar_one(),
+            "rfqs":c.execute(select(func.count()).select_from(rfqs)).scalar_one(),
+            "qualified_rfqs":c.execute(select(func.count()).select_from(rfqs).where(rfqs.c.intent_score>=threshold,rfqs.c.status.in_(["qualified","hot"]))).scalar_one(),
+            "review_rfqs":c.execute(select(func.count()).select_from(fraud_assessments).where(fraud_assessments.c.decision=="review")).scalar_one(),
+            "blocked_rfqs":c.execute(select(func.count()).select_from(fraud_assessments).where(fraud_assessments.c.decision=="blocked")).scalar_one(),
+            "released_matches":c.execute(select(func.count()).select_from(matches)).scalar_one(),
+            "quotes":c.execute(select(func.count()).select_from(quotes)).scalar_one(),
+            "deal_rooms":c.execute(select(func.count()).select_from(deal_rooms)).scalar_one(),
+            "orders":c.execute(select(func.count()).select_from(orders)).scalar_one(),
+            "notifications":c.execute(select(func.count()).select_from(notifications)).scalar_one(),
+            "controls":{"qualification_threshold":threshold,"first_batch":int_setting(c,"first_batch",3),"next_batch":int_setting(c,"next_batch",2),
+                "auto_expand_minutes":int_setting(c,"auto_expand_minutes",DEFAULT_AUTO_EXPAND_MINUTES),"min_responses":int_setting(c,"min_responses",DEFAULT_MIN_RESPONSES),
+                "max_batches":int_setting(c,"max_batches",DEFAULT_MAX_BATCHES),"duplicate_screening":bool_setting(c,"duplicate_screening",True),
+                "auto_expand":bool_setting(c,"auto_expand",True),"buyer_contact_protected":True}}
