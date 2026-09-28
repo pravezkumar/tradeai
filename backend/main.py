@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy import (
     Boolean, Column, DateTime, Float, Integer, MetaData, String, Table, Text,
-    UniqueConstraint, and_, create_engine, delete, func, insert, or_, select, update
+    UniqueConstraint, and_, create_engine, delete, func, insert, or_, select, text, update
 )
 from sqlalchemy.engine import Engine
 import httpx
@@ -57,7 +57,7 @@ rfqs=Table("rfqs",md,
     Column("status",String(40),nullable=False),Column("intent_score",Integer,nullable=False,default=0),
     Column("score_reasons",Text,nullable=False,default="[]"),Column("risk_flags",Text,nullable=False,default="[]"),
     Column("created_at",DateTime(timezone=True),nullable=False),Column("updated_at",DateTime(timezone=True),nullable=False))
-otp_codes=Table("otp_codes",md,Column("session_id",String(40),primary_key=True),Column("code",String(12),nullable=False),
+otp_codes=Table("otp_codes",md,Column("session_id",String(40),primary_key=True),Column("code",String(64),nullable=False),
     Column("expires_at",DateTime(timezone=True),nullable=False),Column("attempts",Integer,nullable=False,default=0))
 buyer_recovery_challenges=Table("buyer_recovery_challenges",md,Column("id",String(40),primary_key=True),
     Column("phone",String(30),nullable=False,index=True),Column("code_hash",String(64),nullable=False),
@@ -129,6 +129,8 @@ def jload(v):
 def init_db():
     md.create_all(engine)
     with engine.begin() as c:
+        if DATABASE_URL.startswith("postgresql"):
+            c.execute(text("ALTER TABLE otp_codes ALTER COLUMN code TYPE VARCHAR(64)"))
         if not c.execute(select(func.count()).select_from(suppliers)).scalar_one():
             seed=[
             dict(id="sup-001",name="Shakti Industrial Supply",categories=json.dumps(["industrial supplies","construction","cement"]),locations=json.dumps(["uttarakhand","delhi","ncr","north india"]),verification="Trade Verified",trade_score=92,response_score=90,moq="Flexible",capabilities=json.dumps(["bulk supply","gst invoice","dispatch tracking"])),
