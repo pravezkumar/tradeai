@@ -18,7 +18,7 @@ if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL="postgresql+psycopg://"+DATABASE_URL[len("postgres://"):]
 elif DATABASE_URL.startswith("postgresql://") and "+psycopg" not in DATABASE_URL:
     DATABASE_URL="postgresql+psycopg://"+DATABASE_URL[len("postgresql://"):]
-DEV_OTP=os.getenv("TRADEAI_DEV_OTP","123456")
+DEV_OTP=os.getenv("TRADEAI_DEV_OTP","1234")
 ENV=os.getenv("TRADEAI_ENV","development")
 OTP_TTL=int(os.getenv("TRADEAI_OTP_TTL_MINUTES","10"))
 THRESHOLD=int(os.getenv("TRADEAI_QUALIFIED_THRESHOLD","60"))
@@ -37,6 +37,9 @@ WA_VERIFY_TOKEN=os.getenv("TRADEAI_WA_VERIFY_TOKEN","").strip()
 META_APP_SECRET=os.getenv("TRADEAI_META_APP_SECRET","").strip()
 OTP_SECRET=(os.getenv("TRADEAI_OTP_SECRET") or ADMIN_TOKEN or ("tradeai-dev-"+DEV_OTP)).strip()
 OTP_COOLDOWN_SECONDS=max(0,int(os.getenv("TRADEAI_OTP_COOLDOWN_SECONDS","60")))
+MSG91_AUTH_KEY=os.getenv("TRADEAI_MSG91_AUTH_KEY","").strip()
+MSG91_SMS_TEMPLATE_ID=os.getenv("TRADEAI_MSG91_SMS_TEMPLATE_ID","").strip()
+MSG91_OTP_VAR=os.getenv("TRADEAI_MSG91_OTP_VAR","OTP").strip() or "OTP"
 ROUTING_TOKEN=os.getenv("TRADEAI_ROUTING_TOKEN","").strip()
 DEFAULT_AUTO_EXPAND_MINUTES=int(os.getenv("TRADEAI_AUTO_EXPAND_MINUTES","30"))
 DEFAULT_MIN_RESPONSES=int(os.getenv("TRADEAI_MIN_RESPONSES","2"))
@@ -134,7 +137,7 @@ def init_db():
                 c.execute(insert(system_settings).values(key=key,value=value,updated_at=utcnow()))
 
 init_db()
-app=FastAPI(title="TradeAI API",version="1.8.0")
+app=FastAPI(title="TradeAI API",version="1.9.0")
 app.add_middleware(CORSMiddleware,allow_origins=[x.strip() for x in os.getenv("TRADEAI_CORS_ORIGINS","https://tradeai-pgvr.onrender.com,http://localhost:8000,http://127.0.0.1:8000").split(",") if x.strip()],allow_credentials=True,allow_methods=["*"],allow_headers=["*"])
 
 async def routing_background_loop():
@@ -156,7 +159,7 @@ class RFQIn(BaseModel):
 class QualificationIn(BaseModel):
     category:str|None=None; quantity:str|None=None; location:str|None=None; timeline:str|None=None; specifications:str|None=None; budget:str|None=None
 class OTPIn(BaseModel): session_id:str; phone:str=Field(min_length=8,max_length=20)
-class OTPVerify(BaseModel): session_id:str; code:str=Field(min_length=4,max_length=8)
+class OTPVerify(BaseModel): session_id:str; code:str=Field(min_length=4,max_length=4,pattern=r"^\\d{4}$")
 class SellerAccountIn(BaseModel):
     full_name:str=Field(min_length=2,max_length=100); business_name:str=Field(min_length=2,max_length=160); mobile:str=Field(min_length=8,max_length=20); email:str=Field(min_length=5,max_length=160); seller_type:str=Field(min_length=2,max_length=80); category:str=Field(min_length=2,max_length=120); password:str=Field(min_length=8,max_length=200)
 class SellerLoginIn(BaseModel): login:str=Field(min_length=5,max_length=160); password:str=Field(min_length=8,max_length=200)
@@ -309,18 +312,20 @@ def sync_registered_supplier(c,sid):
     return vals
 
 @app.get("/")
-def root(): return {"service":"TradeAI API","status":"ok","version":"1.8.0"}
+def root(): return {"service":"TradeAI API","status":"ok","version":"1.9.0"}
 @app.get("/api/health")
 def health():
     with engine.connect() as c: c.execute(select(1)).scalar_one()
     ai_ready=bool(OPENAI_API_KEY)
     wa_transport=bool(META_ACCESS_TOKEN and META_PHONE_NUMBER_ID)
-    wa_ready=bool(wa_transport and WA_OTP_TEMPLATE and WA_RFQ_TEMPLATE and WA_VERIFY_TOKEN and META_APP_SECRET)
+    wa_ready=bool(wa_transport and WA_RFQ_TEMPLATE and WA_VERIFY_TOKEN and META_APP_SECRET)
+    sms_ready=bool(MSG91_AUTH_KEY and MSG91_SMS_TEMPLATE_ID)
     return {"ok":True,"database":"postgresql" if DATABASE_URL.startswith("postgresql") else "sqlite","qualification_threshold":THRESHOLD,
         "ai":{"mode":AI_MODE,"configured":ai_ready,"model":AI_MODEL if ai_ready else None,"fallback":"rules"},
-        "whatsapp":{"configured":wa_transport,"otp_template_configured":bool(WA_OTP_TEMPLATE),"rfq_template_configured":bool(WA_RFQ_TEMPLATE),
+        "sms":{"provider":"msg91","configured":sms_ready,"otp_digits":4},
+        "whatsapp":{"configured":wa_transport,"rfq_template_configured":bool(WA_RFQ_TEMPLATE),
             "webhook_verify_configured":bool(WA_VERIFY_TOKEN),"webhook_signature_configured":bool(META_APP_SECRET),"graph_version":META_GRAPH_VERSION},
-        "production_readiness":{"ai":ai_ready,"whatsapp":wa_ready,"otp_hashed_at_rest":True,"otp_resend_cooldown_seconds":OTP_COOLDOWN_SECONDS}}
+        "production_readiness":{"ai":ai_ready,"sms_otp":sms_ready,"whatsapp_rfq":wa_ready,"otp_hashed_at_rest":True,"otp_resend_cooldown_seconds":OTP_COOLDOWN_SECONDS}}
 
 
 AI_FIELDS=("category","quantity","location","timeline","specifications","budget")
@@ -429,9 +434,9 @@ def verify_meta_signature(raw_body:bytes,signature:str|None):
     expected="sha256="+hmac.new(META_APP_SECRET.encode(),raw_body,hashlib.sha256).hexdigest()
     return secrets.compare_digest(expected,signature)
 
-def record_notification(c,kind,recipient,status,session_id=None,rfq_id=None,supplier_id=None,provider_message_id=None,error=None,payload=None):
+def record_notification(c,kind,recipient,status,session_id=None,rfq_id=None,supplier_id=None,provider_message_id=None,error=None,payload=None,channel="whatsapp"):
     nid="ntf-"+uuid.uuid4().hex[:14]; now=utcnow()
-    c.execute(insert(notifications).values(id=nid,kind=kind,channel="whatsapp",recipient=recipient,session_id=session_id,rfq_id=rfq_id,supplier_id=supplier_id,
+    c.execute(insert(notifications).values(id=nid,kind=kind,channel=channel,recipient=recipient,session_id=session_id,rfq_id=rfq_id,supplier_id=supplier_id,
         provider_message_id=provider_message_id,status=status,error=(error or "")[:2000] or None,payload=json.dumps(payload or {},ensure_ascii=False)[:8000],created_at=now,updated_at=now))
     return nid
 
@@ -453,12 +458,29 @@ def whatsapp_template(to,template,language,components):
     except Exception as e:
         return {"configured":True,"status":"failed","message_id":None,"error":str(e)[:1500],"payload":payload}
 
-def send_otp_whatsapp(phone,code):
-    components=[{"type":"body","parameters":[{"type":"text","text":code}]},
-        {"type":"button","sub_type":"url","index":"0","parameters":[{"type":"text","text":code}]}]
-    result=whatsapp_template(phone,WA_OTP_TEMPLATE,WA_OTP_LANGUAGE,components)
-    if result.get("payload"):result["payload"]=redact_sensitive(result["payload"],[code])
-    return result
+def send_otp_sms(phone,code):
+    if not (MSG91_AUTH_KEY and MSG91_SMS_TEMPLATE_ID):
+        return {"configured":False,"status":"not_configured","message_id":None}
+    mobile=normalize_phone(phone)
+    payload={"template_id":MSG91_SMS_TEMPLATE_ID,"short_url":"0","realTimeResponse":"1",
+        "recipients":[{"mobiles":mobile,MSG91_OTP_VAR:code}]}
+    try:
+        with httpx.Client(timeout=20) as client:
+            r=client.post("https://control.msg91.com/api/v5/flow",
+                headers={"authkey":MSG91_AUTH_KEY,"accept":"application/json","content-type":"application/json"},json=payload)
+            r.raise_for_status()
+            try:data=r.json()
+            except Exception:data={"raw":r.text[:1000]}
+        mid=data.get("request_id") or data.get("requestId") or data.get("message") or data.get("type")
+        return {"configured":True,"status":"accepted","message_id":str(mid)[:500] if mid else None,
+            "payload":redact_sensitive(payload,[code])}
+    except httpx.HTTPStatusError as e:
+        detail=e.response.text[:1500] if e.response is not None else str(e)
+        return {"configured":True,"status":"failed","message_id":None,"error":detail,
+            "payload":redact_sensitive(payload,[code])}
+    except Exception as e:
+        return {"configured":True,"status":"failed","message_id":None,"error":str(e)[:1500],
+            "payload":redact_sensitive(payload,[code])}
 
 def notify_supplier_rfq(c,supplier_id,rfq):
     a=rowdict(c.execute(select(seller_accounts).where(seller_accounts.c.id==supplier_id)).first())
@@ -530,7 +552,7 @@ def rfq_detail(rid:str):
 
 @app.post("/api/otp/send")
 def otp_send(p:OTPIn):
-    code=DEV_OTP if ENV!="production" else str(secrets.randbelow(900000)+100000); exp=utcnow()+timedelta(minutes=OTP_TTL)
+    code=DEV_OTP if ENV!="production" else f"{secrets.randbelow(10000):04d}"; exp=utcnow()+timedelta(minutes=OTP_TTL)
     with engine.begin() as c:
         if not c.execute(select(buyer_sessions.c.id).where(buyer_sessions.c.id==p.session_id)).first(): raise HTTPException(404,"Buyer session not found")
         if OTP_COOLDOWN_SECONDS:
@@ -541,12 +563,12 @@ def otp_send(p:OTPIn):
         c.execute(update(buyer_sessions).where(buyer_sessions.c.id==p.session_id).values(phone=p.phone))
         c.execute(delete(otp_codes).where(otp_codes.c.session_id==p.session_id))
         c.execute(insert(otp_codes).values(session_id=p.session_id,code=otp_digest(p.session_id,code),expires_at=exp,attempts=0))
-        delivery=send_otp_whatsapp(p.phone,code)
+        delivery=send_otp_sms(p.phone,code)
         status=delivery["status"] if delivery["configured"] else ("development" if ENV!="production" else "not_configured")
-        record_notification(c,"buyer_otp",p.phone,status,session_id=p.session_id,provider_message_id=delivery.get("message_id"),error=delivery.get("error"),payload=delivery.get("payload"))
-        if ENV=="production" and not delivery["configured"]: raise HTTPException(503,"WhatsApp OTP is not configured")
-        if ENV=="production" and delivery["status"]=="failed": raise HTTPException(502,"WhatsApp OTP delivery was rejected by provider")
-    out={"sent":True,"channel":"whatsapp" if delivery["configured"] else "development","delivery_status":status,"expires_in_minutes":OTP_TTL,"resend_after_seconds":OTP_COOLDOWN_SECONDS}
+        record_notification(c,"buyer_otp",p.phone,status,session_id=p.session_id,provider_message_id=delivery.get("message_id"),error=delivery.get("error"),payload=delivery.get("payload"),channel="sms")
+        if ENV=="production" and not delivery["configured"]: raise HTTPException(503,"SMS OTP is not configured")
+        if ENV=="production" and delivery["status"]=="failed": raise HTTPException(502,"SMS OTP delivery was rejected by provider")
+    out={"sent":True,"channel":"sms" if delivery["configured"] else "development","delivery_status":status,"expires_in_minutes":OTP_TTL,"resend_after_seconds":OTP_COOLDOWN_SECONDS,"otp_digits":4}
     if ENV!="production":out["dev_otp"]=code
     return out
 
